@@ -27,9 +27,22 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const initAudio = useCallback(() => {
     if (!audioRef.current) {
-      audioRef.current = new Audio(audioUrl);
-      audioRef.current.crossOrigin = 'anonymous';
-      audioRef.current.volume = state.volume;
+      const audio = new Audio(audioUrl);
+      audio.crossOrigin = 'anonymous';
+      audio.volume = state.volume;
+      
+      // Attach event listeners immediately when audio is created
+      audio.addEventListener('timeupdate', () => {
+        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+      });
+      audio.addEventListener('loadedmetadata', () => {
+        setState(prev => ({ ...prev, duration: audio.duration }));
+      });
+      audio.addEventListener('ended', () => {
+        setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
+      });
+      
+      audioRef.current = audio;
     }
 
     if (!audioContextRef.current) {
@@ -106,32 +119,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     return () => cancelAnimationFrame(animationRef.current);
   }, [state.isPlaying, updateFrequencyData]);
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const handleTimeUpdate = () => {
-      setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-    };
-
-    const handleLoadedMetadata = () => {
-      setState(prev => ({ ...prev, duration: audio.duration }));
-    };
-
-    const handleEnded = () => {
-      setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
-    };
-
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('ended', handleEnded);
-
-    return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('ended', handleEnded);
-    };
-  }, []);
+  // Cleanup on unmount
 
   useEffect(() => {
     return () => {
