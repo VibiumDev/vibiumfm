@@ -27,13 +27,18 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     frequencyData: new Uint8Array(256),
   });
 
-  const initAudio = useCallback(() => {
+  // Create audio element only (no AudioContext) - safe to call before user gesture
+  const ensureAudioElement = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio(audioUrl);
       audio.crossOrigin = 'anonymous';
-      audio.volume = state.volume;
       
-      // Attach event listeners immediately when audio is created
+      // Apply current state immediately
+      audio.volume = state.volume;
+      audio.muted = state.isMuted;
+      audio.loop = state.isLooping;
+      
+      // Attach event listeners
       audio.addEventListener('timeupdate', () => {
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
       });
@@ -46,18 +51,24 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       
       audioRef.current = audio;
     }
+    return audioRef.current;
+  }, [audioUrl, state.volume, state.isMuted, state.isLooping]);
 
+  // Create AudioContext and analyzer graph - only needed for playback
+  const ensureAudioGraph = useCallback(() => {
+    const audio = ensureAudioElement();
+    
     if (!audioContextRef.current) {
       audioContextRef.current = new AudioContext();
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 512;
       analyserRef.current.smoothingTimeConstant = 0.8;
 
-      sourceRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
+      sourceRef.current = audioContextRef.current.createMediaElementSource(audio);
       sourceRef.current.connect(analyserRef.current);
       analyserRef.current.connect(audioContextRef.current.destination);
     }
-  }, [audioUrl, state.volume]);
+  }, [ensureAudioElement]);
 
   const updateFrequencyData = useCallback(() => {
     if (analyserRef.current && state.isPlaying) {
@@ -69,13 +80,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [state.isPlaying]);
 
   const play = useCallback(async () => {
-    initAudio();
+    ensureAudioGraph();
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
     await audioRef.current?.play();
     setState(prev => ({ ...prev, isPlaying: true }));
-  }, [initAudio]);
+  }, [ensureAudioGraph]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -91,34 +102,30 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [state.isPlaying, play, pause]);
 
   const setVolume = useCallback((volume: number) => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume;
-    }
+    const audio = ensureAudioElement();
+    audio.volume = volume;
     setState(prev => ({ ...prev, volume, isMuted: volume === 0 }));
-  }, []);
+  }, [ensureAudioElement]);
 
   const toggleMute = useCallback(() => {
-    if (audioRef.current) {
-      const newMuted = !state.isMuted;
-      audioRef.current.muted = newMuted;
-      setState(prev => ({ ...prev, isMuted: newMuted }));
-    }
-  }, [state.isMuted]);
+    const audio = ensureAudioElement();
+    const newMuted = !state.isMuted;
+    audio.muted = newMuted;
+    setState(prev => ({ ...prev, isMuted: newMuted }));
+  }, [ensureAudioElement, state.isMuted]);
 
   const seek = useCallback((time: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setState(prev => ({ ...prev, currentTime: time }));
-    }
-  }, []);
+    const audio = ensureAudioElement();
+    audio.currentTime = time;
+    setState(prev => ({ ...prev, currentTime: time }));
+  }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
-    if (audioRef.current) {
-      const newLooping = !state.isLooping;
-      audioRef.current.loop = newLooping;
-      setState(prev => ({ ...prev, isLooping: newLooping }));
-    }
-  }, [state.isLooping]);
+    const audio = ensureAudioElement();
+    const newLooping = !state.isLooping;
+    audio.loop = newLooping;
+    setState(prev => ({ ...prev, isLooping: newLooping }));
+  }, [ensureAudioElement, state.isLooping]);
 
   useEffect(() => {
     if (state.isPlaying) {
