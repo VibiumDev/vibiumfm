@@ -15,6 +15,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
 
   const [state, setState] = useState<AudioAnalyzerState>({
@@ -68,9 +69,14 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       analyserRef.current.fftSize = 512;
       analyserRef.current.smoothingTimeConstant = 0.8;
 
+      // Create gain node for volume control (works in Safari)
+      gainRef.current = audioContextRef.current.createGain();
+      gainRef.current.gain.value = stateRef.current.volume;
+
       sourceRef.current = audioContextRef.current.createMediaElementSource(audio);
       sourceRef.current.connect(analyserRef.current);
-      analyserRef.current.connect(audioContextRef.current.destination);
+      analyserRef.current.connect(gainRef.current);
+      gainRef.current.connect(audioContextRef.current.destination);
     }
   }, [ensureAudioElement]);
 
@@ -106,16 +112,22 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [state.isPlaying, play, pause]);
 
   const setVolume = useCallback((volume: number) => {
-    const audio = ensureAudioElement();
-    audio.volume = volume;
+    ensureAudioElement();
+    // Use GainNode for volume if audio graph exists (Safari compatibility)
+    if (gainRef.current) {
+      gainRef.current.gain.value = volume;
+    }
     setState(prev => ({ ...prev, volume, isMuted: volume === 0 }));
   }, [ensureAudioElement]);
 
   const toggleMute = useCallback(() => {
-    const audio = ensureAudioElement();
+    ensureAudioElement();
     setState(prev => {
       const newMuted = !prev.isMuted;
-      audio.muted = newMuted;
+      // Use GainNode for mute if audio graph exists (Safari compatibility)
+      if (gainRef.current) {
+        gainRef.current.gain.value = newMuted ? 0 : prev.volume;
+      }
       return { ...prev, isMuted: newMuted };
     });
   }, [ensureAudioElement]);
