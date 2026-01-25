@@ -2,9 +2,9 @@ import { useCallback, useRef } from 'react';
 import Scene from './Scene';
 import AudioControls from '../player/AudioControls';
 import { useAudioAnalyzer } from '@/hooks/useAudioAnalyzer';
+import audioFile from '@/assets/built-to-bend.mp3';
 
-// Placeholder audio URL - replace with actual Vibium anthem
-const AUDIO_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+const AUDIO_URL = audioFile;
 
 const Visualizer = () => {
   const containerRef = useRef<HTMLDivElement>(null);
