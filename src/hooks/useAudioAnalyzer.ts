@@ -120,7 +120,6 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [state.isPlaying, updateFrequencyData]);
 
   // Cleanup on unmount
-
   useEffect(() => {
     return () => {
       cancelAnimationFrame(animationRef.current);
