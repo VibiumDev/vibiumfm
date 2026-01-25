@@ -27,16 +27,20 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     frequencyData: new Uint8Array(256),
   });
 
+  // Use a ref to track latest state for audio element initialization
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   // Create audio element only (no AudioContext) - safe to call before user gesture
   const ensureAudioElement = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio(audioUrl);
       audio.crossOrigin = 'anonymous';
       
-      // Apply current state immediately
-      audio.volume = state.volume;
-      audio.muted = state.isMuted;
-      audio.loop = state.isLooping;
+      // Apply current state from ref (avoids dependency on state)
+      audio.volume = stateRef.current.volume;
+      audio.muted = stateRef.current.isMuted;
+      audio.loop = stateRef.current.isLooping;
       
       // Attach event listeners
       audio.addEventListener('timeupdate', () => {
@@ -52,7 +56,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       audioRef.current = audio;
     }
     return audioRef.current;
-  }, [audioUrl, state.volume, state.isMuted, state.isLooping]);
+  }, [audioUrl]);
 
   // Create AudioContext and analyzer graph - only needed for playback
   const ensureAudioGraph = useCallback(() => {
@@ -109,10 +113,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const toggleMute = useCallback(() => {
     const audio = ensureAudioElement();
-    const newMuted = !state.isMuted;
-    audio.muted = newMuted;
-    setState(prev => ({ ...prev, isMuted: newMuted }));
-  }, [ensureAudioElement, state.isMuted]);
+    setState(prev => {
+      const newMuted = !prev.isMuted;
+      audio.muted = newMuted;
+      return { ...prev, isMuted: newMuted };
+    });
+  }, [ensureAudioElement]);
 
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
@@ -122,10 +128,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const toggleLoop = useCallback(() => {
     const audio = ensureAudioElement();
-    const newLooping = !state.isLooping;
-    audio.loop = newLooping;
-    setState(prev => ({ ...prev, isLooping: newLooping }));
-  }, [ensureAudioElement, state.isLooping]);
+    setState(prev => {
+      const newLooping = !prev.isLooping;
+      audio.loop = newLooping;
+      return { ...prev, isLooping: newLooping };
+    });
+  }, [ensureAudioElement]);
 
   useEffect(() => {
     if (state.isPlaying) {
