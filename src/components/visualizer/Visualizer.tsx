@@ -37,18 +37,18 @@ const Visualizer = () => {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-screen bg-gradient-to-br from-player-dark via-player-purple/20 to-player-orange/10 overflow-hidden"
+      className="relative w-full h-screen h-[100dvh] flex flex-col bg-gradient-to-br from-player-dark via-player-purple/20 to-player-orange/10 overflow-hidden"
     >
       {/* Gradient overlay for depth */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
       
-      {/* 3D Canvas */}
-      <div className="absolute inset-0">
+      {/* 3D Canvas - takes remaining space */}
+      <div className="flex-1 relative">
         <Scene frequencyData={frequencyData} />
       </div>
 
-      {/* Audio Controls */}
-      <div className="absolute bottom-8 left-0 right-0 z-10">
+      {/* Audio Controls - auto-sized at bottom with safe area padding */}
+      <div className="relative z-10 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-8">
         <AudioControls
           isPlaying={isPlaying}
           currentTime={currentTime}
