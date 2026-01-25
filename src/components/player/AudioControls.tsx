@@ -98,7 +98,11 @@ const AudioControls = ({
               variant="ghost"
               size="icon"
               onClick={onToggleLoop}
-              className={`hover:bg-white/10 ${isLooping ? 'text-player-accent' : 'text-player-text hover:text-player-accent'}`}
+              className={`hover:bg-white/10 transition-colors ${
+                isLooping 
+                  ? 'text-player-accent bg-player-accent/20 ring-1 ring-player-accent/50' 
+                  : 'text-player-text hover:text-player-accent'
+              }`}
             >
               <Repeat className="w-5 h-5" />
             </Button>
