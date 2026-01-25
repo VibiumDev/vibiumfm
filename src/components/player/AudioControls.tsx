@@ -1,6 +1,6 @@
 import { Play, Pause, Volume2, VolumeX, Maximize, Repeat } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 
 interface AudioControlsProps {
@@ -95,27 +95,14 @@ const AudioControls = ({
 
           {/* Loop and Fullscreen buttons */}
           <div className="w-32 flex justify-end gap-1">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onToggleLoop}
-                    className={`hover:bg-white/10 transition-colors ${
-                      isLooping 
-                        ? 'text-player-accent bg-player-accent/20 ring-1 ring-player-accent/50' 
-                        : 'text-player-text hover:text-player-accent'
-                    }`}
-                  >
-                    <Repeat className="w-5 h-5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{isLooping ? 'Loop: On' : 'Loop: Off'}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="flex items-center gap-1.5">
+              <Repeat className={`w-4 h-4 ${isLooping ? 'text-player-accent' : 'text-player-text/60'}`} />
+              <Switch
+                checked={isLooping}
+                onCheckedChange={onToggleLoop}
+                className="data-[state=checked]:bg-player-accent data-[state=unchecked]:bg-white/20"
+              />
+            </div>
             <Button
               variant="ghost"
               size="icon"
