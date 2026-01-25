@@ -57,6 +57,13 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        player: {
+          orange: "hsl(var(--player-orange))",
+          purple: "hsl(var(--player-purple))",
+          dark: "hsl(var(--player-dark))",
+          text: "hsl(var(--player-text))",
+          accent: "hsl(var(--player-accent))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
