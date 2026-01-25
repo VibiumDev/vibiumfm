@@ -1,4 +1,4 @@
-import { Play, Pause, Volume2, VolumeX, Maximize } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Repeat } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 
@@ -8,10 +8,12 @@ interface AudioControlsProps {
   duration: number;
   volume: number;
   isMuted: boolean;
+  isLooping: boolean;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleMute: () => void;
+  onToggleLoop: () => void;
   onFullscreen: () => void;
 }
 
@@ -28,10 +30,12 @@ const AudioControls = ({
   duration,
   volume,
   isMuted,
+  isLooping,
   onTogglePlay,
   onSeek,
   onVolumeChange,
   onToggleMute,
+  onToggleLoop,
   onFullscreen,
 }: AudioControlsProps) => {
   return (
@@ -88,8 +92,16 @@ const AudioControls = ({
             )}
           </Button>
 
-          {/* Fullscreen button */}
-          <div className="w-32 flex justify-end">
+          {/* Loop and Fullscreen buttons */}
+          <div className="w-32 flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleLoop}
+              className={`hover:bg-white/10 ${isLooping ? 'text-player-accent' : 'text-player-text hover:text-player-accent'}`}
+            >
+              <Repeat className="w-5 h-5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"

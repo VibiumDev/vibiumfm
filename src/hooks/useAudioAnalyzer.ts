@@ -6,6 +6,7 @@ interface AudioAnalyzerState {
   duration: number;
   volume: number;
   isMuted: boolean;
+  isLooping: boolean;
   frequencyData: Uint8Array;
 }
 
@@ -22,6 +23,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     duration: 0,
     volume: 0.7,
     isMuted: false,
+    isLooping: false,
     frequencyData: new Uint8Array(256),
   });
 
@@ -110,6 +112,14 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     }
   }, []);
 
+  const toggleLoop = useCallback(() => {
+    if (audioRef.current) {
+      const newLooping = !state.isLooping;
+      audioRef.current.loop = newLooping;
+      setState(prev => ({ ...prev, isLooping: newLooping }));
+    }
+  }, [state.isLooping]);
+
   useEffect(() => {
     if (state.isPlaying) {
       updateFrequencyData();
@@ -136,5 +146,6 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     setVolume,
     toggleMute,
     seek,
+    toggleLoop,
   };
 };

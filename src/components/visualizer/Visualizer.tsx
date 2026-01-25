@@ -15,11 +15,13 @@ const Visualizer = () => {
     duration,
     volume,
     isMuted,
+    isLooping,
     frequencyData,
     togglePlay,
     seek,
     setVolume,
     toggleMute,
+    toggleLoop,
   } = useAudioAnalyzer(AUDIO_URL);
 
   const handleFullscreen = useCallback(() => {
@@ -53,10 +55,12 @@ const Visualizer = () => {
           duration={duration}
           volume={volume}
           isMuted={isMuted}
+          isLooping={isLooping}
           onTogglePlay={togglePlay}
           onSeek={seek}
           onVolumeChange={setVolume}
           onToggleMute={toggleMute}
+          onToggleLoop={toggleLoop}
           onFullscreen={handleFullscreen}
         />
       </div>
