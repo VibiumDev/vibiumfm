@@ -48,7 +48,7 @@ const Visualizer = () => {
       </div>
 
       {/* Audio Controls - auto-sized at bottom with safe area padding */}
-      <div className="relative z-10 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-8">
+      <div className="relative z-10 pb-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-8">
         <AudioControls
           isPlaying={isPlaying}
           currentTime={currentTime}
