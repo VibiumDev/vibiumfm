@@ -36,9 +36,9 @@ const AudioControls = ({
 }: AudioControlsProps) => {
   return (
     <div className="w-full max-w-2xl mx-auto px-4">
-      <div className="bg-black/40 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+      <div className="bg-black/40 backdrop-blur-md rounded-xl py-2 px-4 border border-white/10">
         {/* Progress bar */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-2 mb-2">
           <span className="text-xs text-player-text/70 w-10 text-right font-mono">
             {formatTime(currentTime)}
           </span>
@@ -79,12 +79,12 @@ const AudioControls = ({
           <Button
             onClick={onTogglePlay}
             size="lg"
-            className="w-14 h-14 rounded-full bg-gradient-to-br from-player-orange to-player-purple hover:opacity-90 text-white shadow-lg shadow-player-purple/30"
+            className="w-11 h-11 rounded-full bg-gradient-to-br from-player-orange to-player-purple hover:opacity-90 text-white shadow-lg shadow-player-purple/30"
           >
             {isPlaying ? (
-              <Pause className="w-6 h-6" />
+              <Pause className="w-5 h-5" />
             ) : (
-              <Play className="w-6 h-6 ml-1" />
+              <Play className="w-5 h-5 ml-0.5" />
             )}
           </Button>
 
