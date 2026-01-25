@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import Scene from './Scene';
 import AudioControls from '../player/AudioControls';
 import { useAudioAnalyzer } from '@/hooks/useAudioAnalyzer';
@@ -8,6 +8,7 @@ const AUDIO_URL = audioFile;
 
 const Visualizer = () => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const {
     isPlaying,
@@ -23,6 +24,27 @@ const Visualizer = () => {
     toggleMute,
     toggleLoop,
   } = useAudioAnalyzer(AUDIO_URL);
+
+  // Listen for fullscreen changes to force layout recalculation
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      // Force a reflow on mobile after exiting fullscreen
+      if (!document.fullscreenElement && containerRef.current) {
+        containerRef.current.style.display = 'none';
+        containerRef.current.offsetHeight; // Trigger reflow
+        containerRef.current.style.display = '';
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
 
   const handleFullscreen = useCallback(() => {
     if (containerRef.current) {
