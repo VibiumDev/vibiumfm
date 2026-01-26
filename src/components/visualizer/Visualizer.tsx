@@ -28,12 +28,37 @@ const Visualizer = () => {
   // Listen for fullscreen changes to force layout recalculation
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-      // Force a reflow on mobile after exiting fullscreen
-      if (!document.fullscreenElement && containerRef.current) {
-        containerRef.current.style.display = 'none';
-        containerRef.current.offsetHeight; // Trigger reflow
-        containerRef.current.style.display = '';
+      const wasFullscreen = isFullscreen;
+      const nowFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(nowFullscreen);
+      
+      // Force layout recalculation when EXITING fullscreen on mobile
+      if (wasFullscreen && !nowFullscreen && containerRef.current) {
+        // Use a small delay to let the browser finish its fullscreen transition
+        setTimeout(() => {
+          if (containerRef.current) {
+            // Force a reflow by toggling display
+            containerRef.current.style.display = 'none';
+            // Read a layout property to force synchronous reflow
+            void containerRef.current.offsetHeight;
+            containerRef.current.style.display = '';
+            
+            // Dispatch resize event to trigger dvh recalculation
+            window.dispatchEvent(new Event('resize'));
+            
+            // Additional reflow after a frame for stubborn browsers
+            requestAnimationFrame(() => {
+              if (containerRef.current) {
+                containerRef.current.style.opacity = '0.99';
+                requestAnimationFrame(() => {
+                  if (containerRef.current) {
+                    containerRef.current.style.opacity = '';
+                  }
+                });
+              }
+            });
+          }
+        }, 100);
       }
     };
 
@@ -44,7 +69,7 @@ const Visualizer = () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     };
-  }, []);
+  }, [isFullscreen]);
 
   const handleFullscreen = useCallback(() => {
     if (containerRef.current) {
@@ -70,7 +95,7 @@ const Visualizer = () => {
       </div>
 
       {/* Audio Controls - auto-sized at bottom with safe area padding */}
-      <div className="relative z-10 pb-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-8">
+      <div className="relative z-10 pb-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-8">
         <AudioControls
           isPlaying={isPlaying}
           currentTime={currentTime}
