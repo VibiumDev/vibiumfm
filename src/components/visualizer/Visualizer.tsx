@@ -9,7 +9,7 @@ const AUDIO_URL = audioFile;
 const Visualizer = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [remountKey, setRemountKey] = useState(0);
   
   const {
     isPlaying,
@@ -26,65 +26,18 @@ const Visualizer = () => {
     toggleLoop,
   } = useAudioAnalyzer(AUDIO_URL);
 
-  // Use Visual Viewport API for accurate height on mobile
-  useEffect(() => {
-    const updateHeight = () => {
-      if (window.visualViewport) {
-        setViewportHeight(window.visualViewport.height);
-      } else {
-        setViewportHeight(window.innerHeight);
-      }
-    };
-
-    updateHeight();
-
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', updateHeight);
-      window.visualViewport.addEventListener('scroll', updateHeight);
-    }
-    window.addEventListener('resize', updateHeight);
-    window.addEventListener('orientationchange', () => {
-      // Delay to let orientation change complete
-      setTimeout(updateHeight, 100);
-    });
-
-    return () => {
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', updateHeight);
-        window.visualViewport.removeEventListener('scroll', updateHeight);
-      }
-      window.removeEventListener('resize', updateHeight);
-    };
-  }, []);
-
-  // Listen for fullscreen changes to force layout recalculation
+  // Listen for fullscreen changes - force remount on exit to fix layout
   useEffect(() => {
     const handleFullscreenChange = () => {
-      const wasFullscreen = isFullscreen;
       const nowFullscreen = !!document.fullscreenElement;
+      const wasFullscreen = isFullscreen;
       setIsFullscreen(nowFullscreen);
       
-      // Force layout recalculation when EXITING fullscreen on mobile
+      // When EXITING fullscreen, force a remount after browser settles
       if (wasFullscreen && !nowFullscreen) {
-        // Use a small delay to let the browser finish its fullscreen transition
         setTimeout(() => {
-          // Re-trigger viewport height calculation
-          if (window.visualViewport) {
-            setViewportHeight(window.visualViewport.height);
-          } else {
-            setViewportHeight(window.innerHeight);
-          }
-          
-          // Dispatch resize event to trigger any other listeners
-          window.dispatchEvent(new Event('resize'));
-          
-          // Force container reflow if needed
-          if (containerRef.current) {
-            containerRef.current.style.display = 'none';
-            void containerRef.current.offsetHeight;
-            containerRef.current.style.display = '';
-          }
-        }, 150);
+          setRemountKey(k => k + 1);
+        }, 200);
       }
     };
 
@@ -107,27 +60,22 @@ const Visualizer = () => {
     }
   }, []);
 
-  // Use inline height from Visual Viewport API, fallback to 100dvh
-  const containerStyle = viewportHeight 
-    ? { height: `${viewportHeight}px` } 
-    : {};
-
   return (
     <div
+      key={remountKey}
       ref={containerRef}
-      style={containerStyle}
-      className="relative w-full h-screen h-[100dvh] flex flex-col bg-gradient-to-br from-player-dark via-player-purple/20 to-player-orange/10 overflow-hidden"
+      className="fixed inset-0 flex flex-col bg-gradient-to-br from-player-dark via-player-purple/20 to-player-orange/10 overflow-hidden"
     >
       {/* Gradient overlay for depth */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
       
       {/* 3D Canvas - takes remaining space */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative min-h-0">
         <Scene frequencyData={frequencyData} />
       </div>
 
-      {/* Audio Controls - larger bottom padding for Android gesture nav (48-56px) */}
-      <div className="relative z-10 pb-14 sm:pb-8">
+      {/* Audio Controls - fixed bottom padding for Android gesture nav */}
+      <div className="relative z-10 pb-14 sm:pb-8 flex-shrink-0">
         <AudioControls
           isPlaying={isPlaying}
           currentTime={currentTime}
