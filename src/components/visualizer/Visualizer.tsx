@@ -9,6 +9,7 @@ const AUDIO_URL = audioFile;
 const Visualizer = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   
   const {
     isPlaying,
@@ -25,6 +26,37 @@ const Visualizer = () => {
     toggleLoop,
   } = useAudioAnalyzer(AUDIO_URL);
 
+  // Use Visual Viewport API for accurate height on mobile
+  useEffect(() => {
+    const updateHeight = () => {
+      if (window.visualViewport) {
+        setViewportHeight(window.visualViewport.height);
+      } else {
+        setViewportHeight(window.innerHeight);
+      }
+    };
+
+    updateHeight();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateHeight);
+      window.visualViewport.addEventListener('scroll', updateHeight);
+    }
+    window.addEventListener('resize', updateHeight);
+    window.addEventListener('orientationchange', () => {
+      // Delay to let orientation change complete
+      setTimeout(updateHeight, 100);
+    });
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', updateHeight);
+        window.visualViewport.removeEventListener('scroll', updateHeight);
+      }
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
+
   // Listen for fullscreen changes to force layout recalculation
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -33,32 +65,26 @@ const Visualizer = () => {
       setIsFullscreen(nowFullscreen);
       
       // Force layout recalculation when EXITING fullscreen on mobile
-      if (wasFullscreen && !nowFullscreen && containerRef.current) {
+      if (wasFullscreen && !nowFullscreen) {
         // Use a small delay to let the browser finish its fullscreen transition
         setTimeout(() => {
+          // Re-trigger viewport height calculation
+          if (window.visualViewport) {
+            setViewportHeight(window.visualViewport.height);
+          } else {
+            setViewportHeight(window.innerHeight);
+          }
+          
+          // Dispatch resize event to trigger any other listeners
+          window.dispatchEvent(new Event('resize'));
+          
+          // Force container reflow if needed
           if (containerRef.current) {
-            // Force a reflow by toggling display
             containerRef.current.style.display = 'none';
-            // Read a layout property to force synchronous reflow
             void containerRef.current.offsetHeight;
             containerRef.current.style.display = '';
-            
-            // Dispatch resize event to trigger dvh recalculation
-            window.dispatchEvent(new Event('resize'));
-            
-            // Additional reflow after a frame for stubborn browsers
-            requestAnimationFrame(() => {
-              if (containerRef.current) {
-                containerRef.current.style.opacity = '0.99';
-                requestAnimationFrame(() => {
-                  if (containerRef.current) {
-                    containerRef.current.style.opacity = '';
-                  }
-                });
-              }
-            });
           }
-        }, 100);
+        }, 150);
       }
     };
 
@@ -81,9 +107,15 @@ const Visualizer = () => {
     }
   }, []);
 
+  // Use inline height from Visual Viewport API, fallback to 100dvh
+  const containerStyle = viewportHeight 
+    ? { height: `${viewportHeight}px` } 
+    : {};
+
   return (
     <div
       ref={containerRef}
+      style={containerStyle}
       className="relative w-full h-screen h-[100dvh] flex flex-col bg-gradient-to-br from-player-dark via-player-purple/20 to-player-orange/10 overflow-hidden"
     >
       {/* Gradient overlay for depth */}
@@ -94,8 +126,8 @@ const Visualizer = () => {
         <Scene frequencyData={frequencyData} />
       </div>
 
-      {/* Audio Controls - auto-sized at bottom with safe area padding */}
-      <div className="relative z-10 pb-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-8">
+      {/* Audio Controls - larger bottom padding for Android gesture nav (48-56px) */}
+      <div className="relative z-10 pb-14 sm:pb-8">
         <AudioControls
           isPlaying={isPlaying}
           currentTime={currentTime}
