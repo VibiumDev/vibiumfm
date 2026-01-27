@@ -1,93 +1,114 @@
 
-# Smooth Fullscreen Exit Transition
+# Fix Time Scrubber Snapping to Beginning
 
 ## Problem
-When exiting fullscreen mode, there's visible jitter/thrashing of elements because:
-1. The browser takes time to complete its fullscreen exit transition
-2. During the 200ms delay before remount, the layout may be in an incorrect state
-3. The component then suddenly remounts, causing an abrupt visual "snap"
+The time scrubber snaps back to `0:00` when released, especially noticeable when:
+- You haven't pressed Play yet (audio element not initialized)
+- The audio is paused
+
+**Root Cause**: When seeking before the audio has been played, the `seek()` function creates the `HTMLAudioElement` for the first time. The browser fires a `timeupdate` event with `currentTime = 0` before the seek value takes effect. This races with the 50ms delay in `AudioControls`, causing the slider to snap back to 0.
 
 ## Solution
-Add a fade-out/fade-in transition to mask the layout recalculation. Instead of an abrupt remount, the component will:
-1. Fade to black when exiting fullscreen
-2. Perform the remount while hidden
-3. Fade back in once the layout is stable
+Prevent the `timeupdate` event listener from overwriting the seek value while a seek operation is in progress.
 
-## Technical Approach
+### Approach
+Add a "seeking" flag in the `useAudioAnalyzer` hook that temporarily blocks `timeupdate` events from updating state. This ensures the React state reflects the intended seek position, not a stale browser value.
 
-### State Changes
-Add a new `isTransitioning` state to control the fade animation:
-- When fullscreen exit is detected, set `isTransitioning = true` (triggers fade-out)
-- After fade-out completes (~150ms), trigger the remount
-- After remount, wait one frame, then set `isTransitioning = false` (triggers fade-in)
+## Implementation Details
 
-### CSS Animation
-Add a simple opacity transition to the container with a quick duration (150-200ms). The transition will use the existing Tailwind utilities:
-- `transition-opacity duration-150`
-- `opacity-0` when transitioning, `opacity-100` when stable
+### File 1: `src/hooks/useAudioAnalyzer.ts`
 
-### Implementation
+Add a `seekingRef` to track when a seek is in progress:
 
-**File: `src/components/visualizer/Visualizer.tsx`**
-
-```tsx
-const Visualizer = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [remountKey, setRemountKey] = useState(0);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const nowFullscreen = !!document.fullscreenElement;
-      const wasFullscreen = isFullscreen;
-      setIsFullscreen(nowFullscreen);
-      
-      if (wasFullscreen && !nowFullscreen) {
-        // Step 1: Start fade-out immediately
-        setIsTransitioning(true);
-        
-        // Step 2: After fade-out, trigger remount
-        setTimeout(() => {
-          setRemountKey(k => k + 1);
-          
-          // Step 3: After remount + 1 frame, fade back in
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              setIsTransitioning(false);
-            });
-          });
-        }, 200); // Matches fade duration + browser settle time
-      }
-    };
-    // ... event listeners
-  }, [isFullscreen]);
-
-  return (
-    <div
-      key={remountKey}
-      ref={containerRef}
-      className={`fixed inset-0 flex flex-col ... transition-opacity duration-200 ${
-        isTransitioning ? 'opacity-0' : 'opacity-100'
-      }`}
-    >
-      {/* ... children unchanged ... */}
-    </div>
-  );
-};
+```text
+Changes:
+1. Add a new ref: `const seekingRef = useRef(false);`
+2. In the `timeupdate` event listener, check `if (!seekingRef.current)` before updating state
+3. In the `seek()` function:
+   - Set `seekingRef.current = true` before setting `audio.currentTime`
+   - Use a small timeout (100ms) to reset it, or listen for the `seeked` event
 ```
 
-### Why This Works
-- The fade masks the moment when the layout is recalculating
-- Users see a quick, intentional fade transition instead of elements jumping around
-- The 200ms duration is fast enough to feel responsive but slow enough to hide the jitter
-- Using `requestAnimationFrame` twice ensures the DOM has fully painted before fading back in
+**Modified `ensureAudioElement` (timeupdate listener):**
+```tsx
+audio.addEventListener('timeupdate', () => {
+  // Don't update if we're in the middle of a seek operation
+  if (!seekingRef.current) {
+    setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+  }
+});
+```
+
+**Modified `seek` function:**
+```tsx
+const seek = useCallback((time: number) => {
+  const audio = ensureAudioElement();
+  seekingRef.current = true;
+  audio.currentTime = time;
+  setState(prev => ({ ...prev, currentTime: time }));
+  
+  // Reset seeking flag after browser has processed the seek
+  setTimeout(() => {
+    seekingRef.current = false;
+  }, 100);
+}, [ensureAudioElement]);
+```
+
+### File 2: `src/components/player/AudioControls.tsx`
+
+Increase the timeout from 50ms to 150ms to give more margin for the seek to fully propagate:
+
+```tsx
+onValueCommit={([value]) => {
+  onSeek(value);
+  setScrubTime(value);
+  // Longer delay to ensure seek propagates fully
+  setTimeout(() => setIsScrubbing(false), 150);
+}}
+```
+
+## Why This Works
+
+```text
+User drags scrubber to 1:30 → releases
+
+┌─────────────────────────────────────────────────────────┐
+│ Before Fix                                              │
+├─────────────────────────────────────────────────────────┤
+│ 1. onSeek(90) called                                    │
+│ 2. seek() creates audio element (if first time)         │
+│ 3. audio.currentTime = 90                               │
+│ 4. Browser fires timeupdate with currentTime = 0        │
+│ 5. setState({ currentTime: 0 })  ← PROBLEM!             │
+│ 6. 50ms later: isScrubbing = false                      │
+│ 7. Slider reads currentTime = 0, snaps back             │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ After Fix                                               │
+├─────────────────────────────────────────────────────────┤
+│ 1. onSeek(90) called                                    │
+│ 2. seek() sets seekingRef = true                        │
+│ 3. seek() creates audio element (if first time)         │
+│ 4. audio.currentTime = 90                               │
+│ 5. setState({ currentTime: 90 })                        │
+│ 6. Browser fires timeupdate with currentTime = 0        │
+│ 7. timeupdate blocked by seekingRef ← FIXED!            │
+│ 8. 100ms later: seekingRef = false                      │
+│ 9. 150ms later: isScrubbing = false                     │
+│ 10. Slider reads currentTime = 90, stays put            │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `src/components/visualizer/Visualizer.tsx` | Add `isTransitioning` state, fade-out/fade-in logic, and transition classes |
+| `src/hooks/useAudioAnalyzer.ts` | Add `seekingRef`, guard `timeupdate` listener, update `seek()` function |
+| `src/components/player/AudioControls.tsx` | Increase timeout from 50ms to 150ms |
 
-## Alternative Considered
-Using a black overlay that fades in/out instead of fading the whole container. This would be slightly more complex but could provide a more "cinematic" feel. The simpler opacity approach should work well for this use case.
+## Testing Checklist
+- Scrub before ever pressing Play → should stay at scrubbed position
+- Scrub while paused → should stay at scrubbed position
+- Scrub while playing → should continue from scrubbed position
+- Volume slider should still work normally (unaffected)
