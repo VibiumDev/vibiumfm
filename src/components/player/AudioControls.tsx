@@ -66,8 +66,8 @@ const AudioControls = ({
             onValueCommit={([value]) => {
               onSeek(value);
               setScrubTime(value);
-              // Delay resetting isScrubbing to allow seek to propagate
-              setTimeout(() => setIsScrubbing(false), 50);
+              // Longer delay to ensure seek propagates fully
+              setTimeout(() => setIsScrubbing(false), 150);
             }}
             className="flex-1"
           />
