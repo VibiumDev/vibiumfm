@@ -58,14 +58,16 @@ const AudioControls = ({
               setIsScrubbing(true);
               setScrubTime(currentTime);
             }}
-            onPointerUp={() => setIsScrubbing(false)}
-            onPointerCancel={() => setIsScrubbing(false)}
             onValueChange={([value]) => {
-              setScrubTime(value);
+              if (isScrubbing) {
+                setScrubTime(value);
+              }
             }}
             onValueCommit={([value]) => {
               onSeek(value);
-              setIsScrubbing(false);
+              setScrubTime(value);
+              // Delay resetting isScrubbing to allow seek to propagate
+              setTimeout(() => setIsScrubbing(false), 50);
             }}
             className="flex-1"
           />
