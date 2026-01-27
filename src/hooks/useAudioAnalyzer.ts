@@ -170,8 +170,16 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   useEffect(() => {
     return () => {
       cancelAnimationFrame(animationRef.current);
-      audioRef.current?.pause();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = ''; // Stops any pending loads and clears event listeners
+        audioRef.current = null;
+      }
       audioContextRef.current?.close();
+      audioContextRef.current = null;
+      sourceRef.current = null;
+      analyserRef.current = null;
+      gainRef.current = null;
     };
   }, []);
 
