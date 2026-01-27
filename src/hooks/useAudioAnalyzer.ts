@@ -17,14 +17,6 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
-  const seekingRef = useRef(false);
-  const pendingSeekTimeRef = useRef<number | null>(null);
-  const mountedRef = useRef(true);
-
-  // Stable event handler refs for cleanup
-  const handleTimeUpdateRef = useRef<(() => void) | null>(null);
-  const handleLoadedMetadataRef = useRef<(() => void) | null>(null);
-  const handleEndedRef = useRef<(() => void) | null>(null);
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
@@ -40,99 +32,32 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  // Helper: wait for metadata to be ready
-  const waitForMetadata = useCallback((audio: HTMLAudioElement): Promise<void> => {
-    return new Promise((resolve) => {
-      if (audio.readyState >= 1) {
-        resolve();
-        return;
-      }
-      const onLoaded = () => {
-        audio.removeEventListener('loadedmetadata', onLoaded);
-        resolve();
-      };
-      audio.addEventListener('loadedmetadata', onLoaded);
-    });
-  }, []);
-
-  // Helper: seek and wait for confirmation via 'seeked' event
-  const seekTo = useCallback((audio: HTMLAudioElement, time: number): Promise<void> => {
-    return new Promise((resolve) => {
-      seekingRef.current = true;
-      
-      const cleanup = () => {
-        audio.removeEventListener('seeked', onSeeked);
-        clearTimeout(timeoutId);
-      };
-      
-      const onSeeked = () => {
-        cleanup();
-        seekingRef.current = false;
-        // Clear pending if it matches what we just seeked to
-        if (pendingSeekTimeRef.current === time) {
-          pendingSeekTimeRef.current = null;
-        }
-        resolve();
-      };
-      
-      // Safety timeout fallback (500ms)
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        seekingRef.current = false;
-        resolve();
-      }, 500);
-      
-      audio.addEventListener('seeked', onSeeked);
-      audio.currentTime = time;
-    });
-  }, []);
-
   // Create audio element only (no AudioContext) - safe to call before user gesture
   const ensureAudioElement = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio(audioUrl);
       audio.crossOrigin = 'anonymous';
-      audio.preload = 'metadata'; // Encourage metadata readiness on mobile
       
       // Apply current state from ref (avoids dependency on state)
       audio.volume = stateRef.current.volume;
       audio.muted = stateRef.current.isMuted;
       audio.loop = stateRef.current.isLooping;
       
-      // Create stable event handlers
-      handleTimeUpdateRef.current = () => {
-        if (!mountedRef.current) return;
-        // Don't update if we're in the middle of a seek operation
-        if (!seekingRef.current) {
-          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-        }
-      };
-      
-      handleLoadedMetadataRef.current = () => {
-        if (!mountedRef.current) return;
-        setState(prev => ({ ...prev, duration: audio.duration }));
-        
-        // If there's a pending seek, apply it now that metadata is ready
-        if (pendingSeekTimeRef.current !== null) {
-          const pendingTime = pendingSeekTimeRef.current;
-          seekTo(audio, pendingTime);
-        }
-      };
-      
-      handleEndedRef.current = () => {
-        if (!mountedRef.current) return;
-        setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
-      };
-      
       // Attach event listeners
-      audio.addEventListener('timeupdate', handleTimeUpdateRef.current);
-      audio.addEventListener('loadedmetadata', handleLoadedMetadataRef.current);
-      audio.addEventListener('ended', handleEndedRef.current);
+      audio.addEventListener('timeupdate', () => {
+        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+      });
+      audio.addEventListener('loadedmetadata', () => {
+        setState(prev => ({ ...prev, duration: audio.duration }));
+      });
+      audio.addEventListener('ended', () => {
+        setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
+      });
       
       audioRef.current = audio;
     }
     return audioRef.current;
-  }, [audioUrl, seekTo]);
+  }, [audioUrl]);
 
   // Create AudioContext and analyzer graph - only needed for playback
   const ensureAudioGraph = useCallback(() => {
@@ -166,47 +91,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const play = useCallback(async () => {
     ensureAudioGraph();
-    const audio = audioRef.current!;
-    
-    // Determine target time: pending seek takes priority, then current state
-    const targetTime = pendingSeekTimeRef.current ?? stateRef.current.currentTime;
-    
-    // Wait for metadata before seeking
-    await waitForMetadata(audio);
-    
-    // Apply seek before playback if target is meaningful
-    const duration = audio.duration;
-    if (targetTime >= 0 && (!isNaN(duration) ? targetTime <= duration : true)) {
-      if (Math.abs(audio.currentTime - targetTime) > 0.1) {
-        await seekTo(audio, targetTime);
-      }
-    }
-    
-    // Resume AudioContext if suspended
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
-    
-    await audio.play();
+    await audioRef.current?.play();
     setState(prev => ({ ...prev, isPlaying: true }));
-    
-    // Post-play correction: Android Chrome may reset currentTime after play() resolves
-    // Check on next frames and re-seek if needed
-    const checkAndCorrect = () => {
-      if (!mountedRef.current || !audioRef.current) return;
-      
-      const currentAudioTime = audioRef.current.currentTime;
-      // If browser reset us back near 0 (or drifted significantly), re-seek
-      if (Math.abs(currentAudioTime - targetTime) > 0.5 && targetTime > 0.5) {
-        seekTo(audioRef.current, targetTime);
-      }
-    };
-    
-    // Use rAF twice to catch async resets
-    requestAnimationFrame(() => {
-      requestAnimationFrame(checkAndCorrect);
-    });
-  }, [ensureAudioGraph, waitForMetadata, seekTo]);
+  }, [ensureAudioGraph]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -243,20 +133,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [ensureAudioElement]);
 
   const seek = useCallback((time: number) => {
-    // Set pending seek as source of truth
-    pendingSeekTimeRef.current = time;
-    
     const audio = ensureAudioElement();
-    
-    // Optimistically update React state immediately (keeps UI responsive)
+    audio.currentTime = time;
     setState(prev => ({ ...prev, currentTime: time }));
-    
-    // If metadata is ready, apply the seek to the audio element
-    if (audio.readyState >= 1) {
-      seekTo(audio, time);
-    }
-    // If metadata isn't ready, loadedmetadata handler will apply the pending seek
-  }, [ensureAudioElement, seekTo]);
+  }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
     const audio = ensureAudioElement();
@@ -278,36 +158,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   // Cleanup on unmount
   useEffect(() => {
-    mountedRef.current = true;
-    
     return () => {
-      mountedRef.current = false;
       cancelAnimationFrame(animationRef.current);
-      
-      if (audioRef.current) {
-        const audio = audioRef.current;
-        
-        // Remove event listeners using stable refs
-        if (handleTimeUpdateRef.current) {
-          audio.removeEventListener('timeupdate', handleTimeUpdateRef.current);
-        }
-        if (handleLoadedMetadataRef.current) {
-          audio.removeEventListener('loadedmetadata', handleLoadedMetadataRef.current);
-        }
-        if (handleEndedRef.current) {
-          audio.removeEventListener('ended', handleEndedRef.current);
-        }
-        
-        audio.pause();
-        audio.src = '';
-        audioRef.current = null;
-      }
-      
+      audioRef.current?.pause();
       audioContextRef.current?.close();
-      audioContextRef.current = null;
-      sourceRef.current = null;
-      analyserRef.current = null;
-      gainRef.current = null;
     };
   }, []);
 
