@@ -17,6 +17,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
+  const seekingRef = useRef(false);
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
@@ -45,7 +46,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       
       // Attach event listeners
       audio.addEventListener('timeupdate', () => {
-        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        // Don't update if we're in the middle of a seek operation
+        if (!seekingRef.current) {
+          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        }
       });
       audio.addEventListener('loadedmetadata', () => {
         setState(prev => ({ ...prev, duration: audio.duration }));
@@ -134,8 +138,14 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
+    seekingRef.current = true;
     audio.currentTime = time;
     setState(prev => ({ ...prev, currentTime: time }));
+    
+    // Reset seeking flag after browser has processed the seek
+    setTimeout(() => {
+      seekingRef.current = false;
+    }, 100);
   }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
