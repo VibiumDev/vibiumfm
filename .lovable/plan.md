@@ -1,38 +1,37 @@
 
 
-# Fix: Play always jumps back to start
+## Problem Diagnosis
 
-## Problem
-When the user seeks to a position while paused and then hits play, the audio resets to 0:00. This happens because:
-1. The audio element is created eagerly on mount, but metadata may not be loaded yet
-2. Setting `audio.currentTime` before the audio is fully loaded doesn't always persist
-3. When `play()` is called, the first-time audio graph creation (`createMediaElementSource`) can also cause the position to reset
+The scrubber snaps back to 0 because:
 
-## Solution
-In the `play` function, after setting up the audio graph and before calling `audio.play()`, re-apply the current seek position from React state to the audio element. This ensures the intended position is always enforced at play time.
+1. `seek()` sets `seekingRef = true` (guards against `timeupdate` overwriting state) but the guard expires after **150ms**
+2. After 150ms, `handleTimeUpdate` fires with `audio.currentTime` which is still **0** — because Chrome silently fails to seek on an unplayed/unbuffered audio element
+3. That 0 gets pushed into React state, overwriting the scrubbed position
+4. In AudioControls, the `scrubValue` cleanup effect doesn't match (scrubValue=30 vs currentTime=0), so eventually the slider shows 0
 
-## Changes
+The "play is broken after scrubbing" issue: `applyPendingSeek` awaits metadata/canplay events that may never fire (audio already loaded), or the seek still fails because Chrome won't seek to unbuffered regions without active playback.
 
-**File: `src/hooks/useAudioAnalyzer.ts`**
+## Solution: Deferred Seek Architecture
 
-Update the `play` function to restore `currentTime` from state before playing:
+Stop trying to seek the actual `<audio>` element while paused. Instead, just remember the intended position and apply it only when play starts.
 
-```ts
-const play = useCallback(async () => {
-  ensureAudioGraph();
-  const audio = audioRef.current!;
-  if (audioContextRef.current?.state === 'suspended') {
-    await audioContextRef.current.resume();
-  }
-  // Re-apply seek position — it may not have persisted if set before metadata loaded
-  const intended = stateRef.current.currentTime;
-  if (Math.abs(audio.currentTime - intended) > 0.5) {
-    audio.currentTime = intended;
-  }
-  await audio.play();
-  setState(prev => ({ ...prev, isPlaying: true }));
-}, [ensureAudioGraph]);
-```
+### Changes to `useAudioAnalyzer.ts`
 
-Single file change, minimal risk.
+1. **Remove `applyPendingSeek` entirely** — it's overcomplicated and the async awaits cause race conditions
+2. **Simplify `seek()`**: Just store the target in `pendingSeekRef` and update `currentTime` in state. Don't touch `audio.currentTime` at all if paused.
+3. **Simplify `play()`**: Before calling `audio.play()`, set `audio.currentTime = pendingSeekRef.current` synchronously (audio is loaded by this point due to `preload="auto"`). Clear the ref.
+4. **Fix `handleTimeUpdate`**: If `pendingSeekRef.current` is set, ignore timeupdate events (don't overwrite the user's chosen position). Remove the 150ms timeout guard entirely.
+5. **When playing and user seeks**: Set `audio.currentTime` directly (works fine since audio is actively buffering during playback). Keep `pendingSeekRef` as backup.
+
+### Changes to `AudioControls.tsx`
+
+6. **Remove the `scrubValue` state and effect entirely** — the parent's `currentTime` will now stay correct because we won't let `handleTimeUpdate` overwrite it while a seek is pending. The slider just uses `currentTime` directly.
+7. **`onValueChange`**: Call `onSeek(value)` 
+8. **`onValueCommit`**: Call `onSeek(value)` (same — the deferred logic lives in the hook)
+
+### Result
+
+- Dragging while paused: slider stays where you put it, audio seeks on play
+- Dragging while playing: audio seeks immediately (already buffering)
+- No async race conditions, no timeout guards, no snap-back
 
