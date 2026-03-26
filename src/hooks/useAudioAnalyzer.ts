@@ -138,8 +138,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
+    seekingRef.current = true;
+    clearTimeout(seekTimeoutRef.current);
     audio.currentTime = time;
     setState(prev => ({ ...prev, currentTime: time }));
+    seekTimeoutRef.current = setTimeout(() => {
+      seekingRef.current = false;
+    }, 150);
   }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
