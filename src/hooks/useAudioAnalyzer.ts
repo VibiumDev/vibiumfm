@@ -95,10 +95,16 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const play = useCallback(async () => {
     ensureAudioGraph();
+    const audio = audioRef.current!;
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
-    await audioRef.current?.play();
+    // Re-apply seek position — it may not have persisted if set before metadata loaded
+    const intended = stateRef.current.currentTime;
+    if (Math.abs(audio.currentTime - intended) > 0.5) {
+      audio.currentTime = intended;
+    }
+    await audio.play();
     setState(prev => ({ ...prev, isPlaying: true }));
   }, [ensureAudioGraph]);
 
