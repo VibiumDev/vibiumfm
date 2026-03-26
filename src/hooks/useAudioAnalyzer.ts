@@ -165,6 +165,11 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     return () => cancelAnimationFrame(animationRef.current);
   }, [state.isPlaying, updateFrequencyData]);
 
+  // Eagerly create audio element on mount so metadata loads
+  useEffect(() => {
+    ensureAudioElement();
+  }, [ensureAudioElement]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
