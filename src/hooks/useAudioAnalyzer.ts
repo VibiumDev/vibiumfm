@@ -31,9 +31,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     frequencyData: new Uint8Array(256),
   });
 
-  // Use a ref to track latest state for audio element initialization
+  // Use refs so audio element listeners always call the latest setState / read latest state
   const stateRef = useRef(state);
   stateRef.current = state;
+  const setStateRef = useRef(setState);
+  setStateRef.current = setState;
+  const safeSetState: typeof setState = (...args) => setStateRef.current(...args);
 
   const applyPendingSeek = useCallback(async (audio: HTMLAudioElement, targetTime: number) => {
     pendingSeekRef.current = targetTime;
