@@ -47,7 +47,9 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       
       // Attach event listeners
       audio.addEventListener('timeupdate', () => {
-        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        if (!seekingRef.current) {
+          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        }
       });
       audio.addEventListener('loadedmetadata', () => {
         setState(prev => ({ ...prev, duration: audio.duration }));
