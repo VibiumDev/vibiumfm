@@ -110,10 +110,16 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       await audioContextRef.current.resume();
     }
 
-    // Apply deferred seek before playing
-    if (pendingSeekRef.current !== null) {
-      audio.currentTime = pendingSeekRef.current;
-      pendingSeekRef.current = null;
+    // Apply deferred seek before playing — keep ref set until browser confirms
+    const seekTarget = pendingSeekRef.current;
+    if (seekTarget !== null) {
+      audio.currentTime = seekTarget;
+      // Clear pending only after the browser has actually seeked
+      const onSeeked = () => {
+        pendingSeekRef.current = null;
+        audio.removeEventListener('seeked', onSeeked);
+      };
+      audio.addEventListener('seeked', onSeeked);
     }
 
     await audio.play();
