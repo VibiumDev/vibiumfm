@@ -23,7 +23,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
   const seekingRef = useRef(false);
-  const seekTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const seekTimeoutRef = useRef<number | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const cleanupAudioListenersRef = useRef<(() => void) | null>(null);
 
