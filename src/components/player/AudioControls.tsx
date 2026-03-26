@@ -67,6 +67,7 @@ const AudioControls = ({
             onValueChange={([value]) => {
               if (typeof value === 'number') {
                 setScrubValue(value);
+                onSeek(value);
               }
             }}
             onValueCommit={([value]) => {
