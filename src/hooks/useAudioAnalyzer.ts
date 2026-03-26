@@ -63,7 +63,6 @@ export const useAudioAnalyzer = (audioUrl: string) => {
         const timeoutId = window.setTimeout(finish, SEEK_METADATA_TIMEOUT);
         audio.addEventListener('loadedmetadata', finish);
         audio.addEventListener('canplay', finish);
-        audio.load();
       });
     }
 
