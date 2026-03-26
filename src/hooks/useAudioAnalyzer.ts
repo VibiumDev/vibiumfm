@@ -17,6 +17,8 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
+  const seekingRef = useRef(false);
+  const seekTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
