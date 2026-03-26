@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize, Repeat } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -39,42 +38,24 @@ const AudioControls = ({
   onToggleLoop,
   onFullscreen,
 }: AudioControlsProps) => {
-  const [scrubValue, setScrubValue] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (scrubValue === null) return;
-
-    if (Math.abs(scrubValue - currentTime) <= 0.25) {
-      setScrubValue(null);
-    }
-  }, [currentTime, scrubValue]);
-
-  const displayedTime = scrubValue ?? currentTime;
-
   return (
     <div className="w-full max-w-2xl mx-auto px-4">
       <div className="bg-black/40 backdrop-blur-md rounded-xl py-2 px-4 border border-white/10">
         {/* Progress bar */}
         <div className="flex items-center gap-2 mb-2">
           <span className="text-xs text-player-text/70 w-10 text-right font-mono">
-            {formatTime(displayedTime)}
+            {formatTime(currentTime)}
           </span>
           <Slider
-            value={[displayedTime]}
+            value={[currentTime]}
             min={0}
             max={duration || 100}
             step={0.1}
             onValueChange={([value]) => {
-              if (typeof value === 'number') {
-                setScrubValue(value);
-                onSeek(value);
-              }
+              if (typeof value === 'number') onSeek(value);
             }}
             onValueCommit={([value]) => {
-              if (typeof value === 'number') {
-                setScrubValue(value);
-                onSeek(value);
-              }
+              if (typeof value === 'number') onSeek(value);
             }}
             className="flex-1"
           />
