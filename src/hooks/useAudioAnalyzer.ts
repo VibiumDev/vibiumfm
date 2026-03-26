@@ -19,6 +19,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const animationRef = useRef<number>(0);
   const seekingRef = useRef(false);
   const seekTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const pendingSeekRef = useRef<number | null>(null);
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
@@ -34,11 +35,86 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  const applyPendingSeek = useCallback(async (audio: HTMLAudioElement, targetTime: number) => {
+    pendingSeekRef.current = targetTime;
+
+    if (Math.abs(audio.currentTime - targetTime) <= 0.25) {
+      pendingSeekRef.current = null;
+      return;
+    }
+
+    if (audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+      await new Promise<void>((resolve) => {
+        let resolved = false;
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timeoutId);
+          audio.removeEventListener('loadedmetadata', finish);
+          audio.removeEventListener('canplay', finish);
+          resolve();
+        };
+        const timeoutId = window.setTimeout(finish, 500);
+        audio.addEventListener('loadedmetadata', finish);
+        audio.addEventListener('canplay', finish);
+        audio.load();
+      });
+    }
+
+    try {
+      audio.currentTime = targetTime;
+    } catch {
+      return;
+    }
+
+    if (Math.abs(audio.currentTime - targetTime) <= 0.25) {
+      pendingSeekRef.current = null;
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+        const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutId);
+        audio.removeEventListener('seeked', finish);
+        audio.removeEventListener('canplay', finish);
+        resolve();
+      };
+      const timeoutId = window.setTimeout(finish, 250);
+      audio.addEventListener('seeked', finish);
+      audio.addEventListener('canplay', finish);
+    });
+
+    if (Math.abs(audio.currentTime - targetTime) <= 0.25) {
+      pendingSeekRef.current = null;
+    }
+  }, []);
+
   // Create audio element only (no AudioContext) - safe to call before user gesture
   const ensureAudioElement = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio(audioUrl);
       audio.crossOrigin = 'anonymous';
+      audio.preload = 'auto';
+
+      const syncPendingSeek = () => {
+        const pendingTime = pendingSeekRef.current;
+        if (pendingTime === null || Number.isNaN(pendingTime)) return;
+
+        if (Math.abs(audio.currentTime - pendingTime) > 0.25) {
+          try {
+            audio.currentTime = pendingTime;
+          } catch {
+            return;
+          }
+        }
+
+        if (Math.abs(audio.currentTime - pendingTime) <= 0.25) {
+          pendingSeekRef.current = null;
+        }
+      };
       
       // Apply current state from ref (avoids dependency on state)
       audio.volume = stateRef.current.volume;
@@ -50,11 +126,19 @@ export const useAudioAnalyzer = (audioUrl: string) => {
         if (!seekingRef.current) {
           setState(prev => ({ ...prev, currentTime: audio.currentTime }));
         }
+
+        if (pendingSeekRef.current !== null && Math.abs(audio.currentTime - pendingSeekRef.current) <= 0.25) {
+          pendingSeekRef.current = null;
+        }
       });
       audio.addEventListener('loadedmetadata', () => {
         setState(prev => ({ ...prev, duration: audio.duration }));
+        syncPendingSeek();
       });
+      audio.addEventListener('canplay', syncPendingSeek);
+      audio.addEventListener('seeked', syncPendingSeek);
       audio.addEventListener('ended', () => {
+        pendingSeekRef.current = null;
         setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
       });
       
@@ -99,14 +183,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
-    // Re-apply seek position — it may not have persisted if set before metadata loaded
-    const intended = stateRef.current.currentTime;
-    if (Math.abs(audio.currentTime - intended) > 0.5) {
-      audio.currentTime = intended;
+    const intended = pendingSeekRef.current ?? stateRef.current.currentTime;
+    if (intended > 0) {
+      await applyPendingSeek(audio, intended);
     }
     await audio.play();
     setState(prev => ({ ...prev, isPlaying: true }));
-  }, [ensureAudioGraph]);
+  }, [applyPendingSeek, ensureAudioGraph]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -144,9 +227,20 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
+    pendingSeekRef.current = time;
     seekingRef.current = true;
     clearTimeout(seekTimeoutRef.current);
-    audio.currentTime = time;
+
+    if (audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+      audio.load();
+    } else {
+      try {
+        audio.currentTime = time;
+      } catch {
+        // Chrome can ignore an early seek; play() and ready-state listeners will re-apply it.
+      }
+    }
+
     setState(prev => ({ ...prev, currentTime: time }));
     seekTimeoutRef.current = setTimeout(() => {
       seekingRef.current = false;
@@ -179,6 +273,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      clearTimeout(seekTimeoutRef.current);
       cancelAnimationFrame(animationRef.current);
       audioRef.current?.pause();
       audioContextRef.current?.close();
