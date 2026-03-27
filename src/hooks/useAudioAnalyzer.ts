@@ -187,16 +187,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     await audio.play();
     setState(prev => ({ ...prev, isPlaying: true, currentTime: target ?? prev.currentTime }));
 
+    // Chrome ignores pre-play seeks — re-apply AFTER playback has started
     if (target !== null) {
-      requestAnimationFrame(() => {
-        if (!audio.paused && desiredTimeRef.current === target && Math.abs(audio.currentTime - target) > SEEK_TOLERANCE) {
-          if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
-            seekRetryCountRef.current += 1;
-            audio.currentTime = target;
-          }
-          setState(prev => ({ ...prev, currentTime: target }));
-        }
-      });
+      audio.currentTime = target;
+      setState(prev => ({ ...prev, currentTime: target }));
     }
   }, [ensureAudioGraph]);
 
