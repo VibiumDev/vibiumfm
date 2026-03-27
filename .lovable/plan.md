@@ -1,85 +1,98 @@
 
-Root cause is most likely not the paused scrub itself anymore. The current deferred-seek logic is still fragile because it waits for `seeked` to clear `pendingSeekRef`, but Chrome can fail to emit `seeked` reliably in this sequence or emit time/progress events in an order that leaves React state out of sync. The result is: UI shows the scrubbed value while paused, then `play()` starts from the real media position (still 0), and the slider follows playback from 0.
+Diagnosis
 
-What I would change
+This is happening because Safari and Chrome do not treat pre-play seeks the same way, and the current hook assumes they do.
 
-1. Make the audio element the source of truth once play starts
-- In `play()`, if `pendingSeekRef.current` exists, set `audio.currentTime` to that value and immediately sync React state to that same value.
-- Do not rely only on `seeked` to keep state correct.
+Why Safari works
+- Safari is more permissive about keeping a `currentTime` assignment that happens before playback is fully established.
+- So your paused scrub target survives the transition into playback.
 
-2. Add explicit playback-start reconciliation
-- After `audio.play()`, compare `audio.currentTime` with the pending target.
-- If Chrome ignored the seek and `audio.currentTime` is still near 0, retry the seek once after playback has actually begun (for example on `playing` or first `timeupdate`).
-- Only clear `pendingSeekRef` after the element is confirmed near the requested time.
+Why Chrome fails
+- Chrome can temporarily accept `audio.currentTime = target`, fire `seeked`, and then still begin actual playback from 0 once `play()` starts.
+- In this hook, `handleSeeked` clears `pendingSeekRef` too early:
+  - paused scrub stores target
+  - `play()` sets `audio.currentTime = target`
+  - Chrome may emit `seeked`
+  - `handleSeeked` clears `pendingSeekRef`
+  - playback then starts from real media position 0
+  - `timeupdate` now trusts the audio element and pushes 0 into React state
+- So the bug is not the slider. It is the hook clearing “desired seek” before Chrome has proven playback really started at that position.
 
-3. Track “desired time” separately from “actual media time”
-- Keep a `desiredTimeRef` or reuse `pendingSeekRef` as the requested scrub position.
-- While paused, slider uses the desired value.
-- Once playback is confirmed at the requested position, resume normal time updates from the element.
+What to change
 
-4. Handle the Chrome-specific failure mode
-- If paused seeking is ignored before playback, use this sequence:
-  - set `audio.currentTime = target`
-  - call `audio.play()`
-  - on `playing`, set `audio.currentTime = target` again
-- This is the most likely fix for “click play -> snaps to 0 and starts playing”.
+1. Stop treating `seeked` as confirmation
+- Do not clear `pendingSeekRef` in `handleSeeked` during paused-to-play transition.
+- `seeked` only means the element processed a seek request, not that playback has stabilized there in Chrome.
 
-5. Tighten event handling in `useAudioAnalyzer.ts`
-- Add listeners for `seeking`, `seeked`, and `playing`.
-- `timeupdate` should not overwrite `currentTime` while there is an unresolved desired seek target.
-- When resolved, update state from `audio.currentTime` and clear the pending target.
+2. Separate desired time from confirmed playback time
+- Keep a ref for the user’s intended scrub position.
+- While paused, UI should continue showing that desired position.
+- Only switch back to audio-element-driven time after playback is confirmed near the target.
 
-6. Keep `AudioControls.tsx` simple
-- The controls file is fine conceptually: slider should keep calling `onSeek` on drag and commit.
-- No extra local scrub state unless needed for drag UX; the bug is in media-state reconciliation, not the slider component now.
+3. Confirm the seek only after playback actually starts
+- In `play()`, apply the target before play.
+- Then re-apply it again on `playing` or first `timeupdate`.
+- Clear the pending target only when `audio.currentTime` is actually within tolerance while playing.
 
-7. Fix the ref warnings separately
-- `AudioControls` is being passed a ref somewhere through composition, and `BarGrid` is also triggering a ref warning from React Three Fiber.
-- These warnings probably are not the direct cause of the scrubber bug, but they should be cleaned up because they indicate component contract issues and make debugging harder.
-- Likely fix: convert components that receive refs indirectly to `forwardRef`, or stop passing refs to plain function components.
+4. Guard `timeupdate`
+- While a desired seek is unresolved, `timeupdate` must not overwrite state with 0 or near-0 values.
+- If Chrome starts from 0, immediately force `audio.currentTime = target` again instead of accepting the event.
 
-Files to update
-- `src/hooks/useAudioAnalyzer.ts` — main fix
-- `src/components/player/AudioControls.tsx` — likely minimal/no logic change
-- Optionally:
-  - `src/components/visualizer/Visualizer.tsx`
-  - `src/components/visualizer/Scene.tsx`
-  - `src/components/visualizer/BarGrid.tsx`
-  for the ref-warning cleanup
+5. Add a small playback-confirmation state
+- Example: `awaitingPlaybackSeekRef` or `pendingSeekPhaseRef`
+- States:
+  - paused target chosen
+  - play requested
+  - playback started but not confirmed
+  - playback confirmed at target
+- This avoids one ref trying to represent too many meanings.
 
-Implementation outline
+Implementation plan
+
+- Update `src/hooks/useAudioAnalyzer.ts`
+  - remove or gate the current `handleSeeked` clearing logic
+  - add a dedicated “awaiting playback confirmation” ref
+  - keep paused seeks purely in React/ref state
+  - in `play()`, set `audio.currentTime = target`, then after `play()` and on `playing`, reapply if Chrome reset it
+  - in `timeupdate`, ignore/reset early 0-values until target is confirmed
+
+- Keep `src/components/player/AudioControls.tsx` unchanged
+  - it is already correctly using `currentTime` as the source of truth
+
+Technical details
+
 ```text
 seek(time):
-  set UI currentTime = time
-  if playing:
-    audio.currentTime = time
-    pendingSeekRef = null
+  set state.currentTime = time
+  if paused:
+    desiredTimeRef = time
+    awaitingPlaybackSeekRef = true
   else:
-    pendingSeekRef = time
+    audio.currentTime = time
+    desiredTimeRef = null
+    awaitingPlaybackSeekRef = false
 
 play():
-  ensure graph
-  target = pendingSeekRef
+  target = desiredTimeRef
   if target != null:
     audio.currentTime = target
-    set UI currentTime = target
+    set state.currentTime = target
 
   await audio.play()
   set isPlaying = true
 
-  if target != null:
-    when playing/first timeupdate:
-      if audio.currentTime is not close to target:
-        audio.currentTime = target
-      if audio.currentTime is close to target:
-        pendingSeekRef = null
-        set UI currentTime = audio.currentTime
+on playing / first timeupdate:
+  if awaitingPlaybackSeekRef and target != null:
+    if abs(audio.currentTime - target) > tolerance:
+      audio.currentTime = target
+      keep UI at target
+    else:
+      clear desired/pending refs
+      sync UI from audio.currentTime
 ```
 
 Expected result
-- Scrub while paused: thumb stays where selected
-- Press play: playback starts from the scrubbed timestamp instead of 0
-- Scrub while playing: seeks immediately and keeps tracking correctly
-
-Technical note
-The current bug strongly suggests “requested seek time” and “actual media playback position” are being conflated too early. The fix is to explicitly reconcile them after playback really starts, instead of assuming `currentTime = target` succeeded just because the assignment ran.
+- Paused scrub stays where selected
+- Pressing play in Chrome starts from the scrubbed time instead of snapping to 0
+- Safari behavior remains correct
+- The hook becomes browser-safe instead of depending on Safari-friendly event ordering
