@@ -20,6 +20,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
+  const playbackSeekAnimationRef = useRef<number>(0);
   const cleanupAudioListenersRef = useRef<(() => void) | null>(null);
 
   const desiredTimeRef = useRef<number | null>(null);
@@ -39,6 +40,39 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  const clearPlaybackSeekAnimation = useCallback(() => {
+    cancelAnimationFrame(playbackSeekAnimationRef.current);
+    playbackSeekAnimationRef.current = 0;
+  }, []);
+
+  const confirmPlaybackSeek = useCallback((audio: HTMLAudioElement, target: number) => {
+    clearPlaybackSeekAnimation();
+
+    const reconcile = () => {
+      if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+        desiredTimeRef.current = null;
+        awaitingPlaybackSeekRef.current = false;
+        seekRetryCountRef.current = 0;
+        playbackSeekAnimationRef.current = 0;
+        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        return;
+      }
+
+      if (seekRetryCountRef.current >= SEEK_RETRY_LIMIT) {
+        playbackSeekAnimationRef.current = 0;
+        setState(prev => ({ ...prev, currentTime: target }));
+        return;
+      }
+
+      seekRetryCountRef.current += 1;
+      audio.currentTime = target;
+      setState(prev => ({ ...prev, currentTime: target }));
+      playbackSeekAnimationRef.current = requestAnimationFrame(reconcile);
+    };
+
+    playbackSeekAnimationRef.current = requestAnimationFrame(reconcile);
+  }, [clearPlaybackSeekAnimation]);
+
   const ensureAudioElement = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio(audioUrl);
@@ -51,16 +85,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
         if (target !== null) {
           if (awaitingPlaybackSeekRef.current) {
             if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+              clearPlaybackSeekAnimation();
               desiredTimeRef.current = null;
               awaitingPlaybackSeekRef.current = false;
               seekRetryCountRef.current = 0;
               setState(prev => ({ ...prev, currentTime: audio.currentTime }));
               return;
-            }
-
-            if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
-              seekRetryCountRef.current += 1;
-              audio.currentTime = target;
             }
 
             setState(prev => ({ ...prev, currentTime: target }));
@@ -79,6 +109,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       };
 
       const handleEnded = () => {
+        clearPlaybackSeekAnimation();
         desiredTimeRef.current = null;
         awaitingPlaybackSeekRef.current = false;
         seekRetryCountRef.current = 0;
@@ -102,15 +133,9 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
         if (target !== null) {
           awaitingPlaybackSeekRef.current = true;
-
-          if (Math.abs(audio.currentTime - target) > SEEK_TOLERANCE) {
-            if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
-              seekRetryCountRef.current += 1;
-              audio.currentTime = target;
-            }
-          }
-
+          seekRetryCountRef.current = 0;
           setState(prev => ({ ...prev, currentTime: target }));
+          confirmPlaybackSeek(audio, target);
         }
       };
 
@@ -138,7 +163,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     }
 
     return audioRef.current;
-  }, [audioUrl]);
+  }, [audioUrl, clearPlaybackSeekAnimation, confirmPlaybackSeek]);
 
   const ensureAudioGraph = useCallback(() => {
     const audio = ensureAudioElement();
@@ -178,6 +203,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     }
 
     if (target !== null) {
+      clearPlaybackSeekAnimation();
       awaitingPlaybackSeekRef.current = true;
       seekRetryCountRef.current = 0;
       audio.currentTime = target;
@@ -187,17 +213,17 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     await audio.play();
     setState(prev => ({ ...prev, isPlaying: true, currentTime: target ?? prev.currentTime }));
 
-    // Chrome ignores pre-play seeks — re-apply AFTER playback has started
     if (target !== null) {
       audio.currentTime = target;
-      setState(prev => ({ ...prev, currentTime: target }));
+      confirmPlaybackSeek(audio, target);
     }
-  }, [ensureAudioGraph]);
+  }, [clearPlaybackSeekAnimation, confirmPlaybackSeek, ensureAudioGraph]);
 
   const pause = useCallback(() => {
+    clearPlaybackSeekAnimation();
     audioRef.current?.pause();
     setState(prev => ({ ...prev, isPlaying: false }));
-  }, []);
+  }, [clearPlaybackSeekAnimation]);
 
   const togglePlay = useCallback(() => {
     if (stateRef.current.isPlaying) {
@@ -231,27 +257,24 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
 
+    clearPlaybackSeekAnimation();
     setState(prev => ({ ...prev, currentTime: time }));
+    desiredTimeRef.current = time;
+    seekRetryCountRef.current = 0;
 
     if (stateRef.current.isPlaying) {
-      audio.currentTime = time;
-      desiredTimeRef.current = time;
       awaitingPlaybackSeekRef.current = true;
-      seekRetryCountRef.current = 0;
+      audio.currentTime = time;
+      confirmPlaybackSeek(audio, time);
       return;
     }
 
-    desiredTimeRef.current = time;
     awaitingPlaybackSeekRef.current = false;
-    seekRetryCountRef.current = 0;
 
-    // Also set audio.currentTime while paused so the browser has the
-    // position ready before play() is called. This helps on standalone
-    // pages where Chrome may ignore seeks issued only during play().
     if (audio.readyState >= 1) {
       audio.currentTime = time;
     }
-  }, [ensureAudioElement]);
+  }, [clearPlaybackSeekAnimation, confirmPlaybackSeek, ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
     const audio = ensureAudioElement();
@@ -277,12 +300,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   useEffect(() => {
     return () => {
+      clearPlaybackSeekAnimation();
       cancelAnimationFrame(animationRef.current);
       cleanupAudioListenersRef.current?.();
       audioRef.current?.pause();
       audioContextRef.current?.close();
     };
-  }, []);
+  }, [clearPlaybackSeekAnimation]);
 
   return {
     ...state,
