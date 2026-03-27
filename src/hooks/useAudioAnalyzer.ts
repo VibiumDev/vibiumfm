@@ -40,7 +40,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       audio.preload = 'auto';
 
       const handleTimeUpdate = () => {
-        // If a seek is pending, don't let the browser overwrite our state
+        // While a seek is pending, ignore browser time updates
         if (pendingSeekRef.current !== null) return;
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
       };
@@ -54,6 +54,20 @@ export const useAudioAnalyzer = (audioUrl: string) => {
         setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
       };
 
+      // Reconciliation: when playback actually starts, re-apply seek if needed
+      const handlePlaying = () => {
+        const target = pendingSeekRef.current;
+        if (target !== null) {
+          // Chrome may have ignored our pre-play seek; force it now that playback is active
+          if (Math.abs(audio.currentTime - target) > 0.5) {
+            audio.currentTime = target;
+          }
+          // Confirm and clear
+          pendingSeekRef.current = null;
+          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        }
+      };
+
       audio.volume = stateRef.current.volume;
       audio.muted = stateRef.current.isMuted;
       audio.loop = stateRef.current.isLooping;
@@ -61,11 +75,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       audio.addEventListener('timeupdate', handleTimeUpdate);
       audio.addEventListener('loadedmetadata', handleLoadedMetadata);
       audio.addEventListener('ended', handleEnded);
+      audio.addEventListener('playing', handlePlaying);
 
       cleanupAudioListenersRef.current = () => {
         audio.removeEventListener('timeupdate', handleTimeUpdate);
         audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
         audio.removeEventListener('ended', handleEnded);
+        audio.removeEventListener('playing', handlePlaying);
       };
 
       audioRef.current = audio;
@@ -94,13 +110,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, [ensureAudioElement]);
 
   const updateFrequencyData = useCallback(() => {
-    if (analyserRef.current && state.isPlaying) {
+    if (analyserRef.current && stateRef.current.isPlaying) {
       const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
       analyserRef.current.getByteFrequencyData(dataArray);
       setState(prev => ({ ...prev, frequencyData: dataArray }));
       animationRef.current = requestAnimationFrame(updateFrequencyData);
     }
-  }, [state.isPlaying]);
+  }, []);
 
   const play = useCallback(async () => {
     ensureAudioGraph();
@@ -110,16 +126,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       await audioContextRef.current.resume();
     }
 
-    // Apply deferred seek before playing — keep ref set until browser confirms
-    const seekTarget = pendingSeekRef.current;
-    if (seekTarget !== null) {
-      audio.currentTime = seekTarget;
-      // Clear pending only after the browser has actually seeked
-      const onSeeked = () => {
-        pendingSeekRef.current = null;
-        audio.removeEventListener('seeked', onSeeked);
-      };
-      audio.addEventListener('seeked', onSeeked);
+    // Apply deferred seek before playing
+    const target = pendingSeekRef.current;
+    if (target !== null) {
+      audio.currentTime = target;
+      setState(prev => ({ ...prev, currentTime: target }));
+      // Don't clear pendingSeekRef yet — handlePlaying will reconcile
     }
 
     await audio.play();
@@ -132,12 +144,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   }, []);
 
   const togglePlay = useCallback(() => {
-    if (state.isPlaying) {
+    if (stateRef.current.isPlaying) {
       pause();
     } else {
       void play();
     }
-  }, [state.isPlaying, play, pause]);
+  }, [play, pause]);
 
   const setVolume = useCallback((volume: number) => {
     const audio = ensureAudioElement();
@@ -166,15 +178,15 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     // Always update React state immediately
     setState(prev => ({ ...prev, currentTime: time }));
 
-    if (state.isPlaying) {
-      // Playing: seek the audio element directly (buffering is active)
+    if (stateRef.current.isPlaying) {
+      // Playing: seek the audio element directly
       audio.currentTime = time;
       pendingSeekRef.current = null;
     } else {
       // Paused: defer the seek until play()
       pendingSeekRef.current = time;
     }
-  }, [ensureAudioElement, state.isPlaying]);
+  }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
     const audio = ensureAudioElement();
