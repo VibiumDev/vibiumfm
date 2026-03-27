@@ -241,8 +241,8 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
     if (stateRef.current.isPlaying) {
       audio.currentTime = time;
-      desiredTimeRef.current = null;
-      awaitingPlaybackSeekRef.current = false;
+      desiredTimeRef.current = time;
+      awaitingPlaybackSeekRef.current = true;
       seekRetryCountRef.current = 0;
       return;
     }
