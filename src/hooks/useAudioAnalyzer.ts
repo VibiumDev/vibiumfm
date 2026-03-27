@@ -48,29 +48,31 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const confirmPlaybackSeek = useCallback((audio: HTMLAudioElement, target: number) => {
     clearPlaybackSeekAnimation();
 
-    const reconcile = () => {
-      if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+    playbackSeekAnimationRef.current = requestAnimationFrame(() => {
+      playbackSeekAnimationRef.current = requestAnimationFrame(() => {
+        playbackSeekAnimationRef.current = 0;
+
+        if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+          desiredTimeRef.current = null;
+          awaitingPlaybackSeekRef.current = false;
+          seekRetryCountRef.current = 0;
+          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+          return;
+        }
+
+        if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
+          seekRetryCountRef.current += 1;
+          audio.currentTime = target;
+          setState(prev => ({ ...prev, currentTime: target }));
+          return;
+        }
+
         desiredTimeRef.current = null;
         awaitingPlaybackSeekRef.current = false;
         seekRetryCountRef.current = 0;
-        playbackSeekAnimationRef.current = 0;
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-        return;
-      }
-
-      if (seekRetryCountRef.current >= SEEK_RETRY_LIMIT) {
-        playbackSeekAnimationRef.current = 0;
-        setState(prev => ({ ...prev, currentTime: target }));
-        return;
-      }
-
-      seekRetryCountRef.current += 1;
-      audio.currentTime = target;
-      setState(prev => ({ ...prev, currentTime: target }));
-      playbackSeekAnimationRef.current = requestAnimationFrame(reconcile);
-    };
-
-    playbackSeekAnimationRef.current = requestAnimationFrame(reconcile);
+      });
+    });
   }, [clearPlaybackSeekAnimation]);
 
   const ensureAudioElement = useCallback(() => {
@@ -82,23 +84,27 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       const handleTimeUpdate = () => {
         const target = desiredTimeRef.current;
 
-        if (target !== null) {
-          if (awaitingPlaybackSeekRef.current) {
-            if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
-              clearPlaybackSeekAnimation();
-              desiredTimeRef.current = null;
-              awaitingPlaybackSeekRef.current = false;
-              seekRetryCountRef.current = 0;
-              setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-              return;
-            }
+        if (target !== null && awaitingPlaybackSeekRef.current) {
+          if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+            clearPlaybackSeekAnimation();
+            desiredTimeRef.current = null;
+            awaitingPlaybackSeekRef.current = false;
+            seekRetryCountRef.current = 0;
+            setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+            return;
+          }
 
+          if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
+            seekRetryCountRef.current += 1;
+            audio.currentTime = target;
             setState(prev => ({ ...prev, currentTime: target }));
             return;
           }
 
-          setState(prev => ({ ...prev, currentTime: target }));
-          return;
+          clearPlaybackSeekAnimation();
+          desiredTimeRef.current = null;
+          awaitingPlaybackSeekRef.current = false;
+          seekRetryCountRef.current = 0;
         }
 
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
