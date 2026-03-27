@@ -21,6 +21,7 @@ const Visualizer = () => {
     isLooping,
     frequencyData,
     togglePlay,
+    previewSeek,
     seek,
     setVolume,
     toggleMute,
@@ -95,6 +96,7 @@ const Visualizer = () => {
           isMuted={isMuted}
           isLooping={isLooping}
           onTogglePlay={togglePlay}
+          onSeekPreview={previewSeek}
           onSeek={seek}
           onVolumeChange={setVolume}
           onToggleMute={toggleMute}
