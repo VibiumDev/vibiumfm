@@ -260,6 +260,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     });
   }, [ensureAudioElement]);
 
+  const previewSeek = useCallback((time: number) => {
+    setState(prev => ({ ...prev, currentTime: time }));
+  }, []);
+
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
 
@@ -273,10 +277,10 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       return;
     }
 
-    awaitingPlaybackSeekRef.current = stateRef.current.isPlaying;
     audio.currentTime = time;
 
     if (stateRef.current.isPlaying) {
+      awaitingPlaybackSeekRef.current = true;
       confirmPlaybackSeek(audio, time);
       return;
     }
@@ -323,6 +327,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     togglePlay,
     setVolume,
     toggleMute,
+    previewSeek,
     seek,
     toggleLoop,
   };
