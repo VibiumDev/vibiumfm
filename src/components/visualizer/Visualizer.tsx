@@ -95,6 +95,7 @@ const Visualizer = () => {
           isMuted={isMuted}
           isLooping={isLooping}
           onTogglePlay={togglePlay}
+          onSeekPreview={seek}
           onSeek={seek}
           onVolumeChange={setVolume}
           onToggleMute={toggleMute}

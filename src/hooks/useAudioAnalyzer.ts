@@ -264,22 +264,24 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     const audio = ensureAudioElement();
 
     clearPlaybackSeekAnimation();
-    setState(prev => ({ ...prev, currentTime: time }));
     desiredTimeRef.current = time;
     seekRetryCountRef.current = 0;
+    setState(prev => ({ ...prev, currentTime: time }));
+
+    if (audio.readyState < 1) {
+      awaitingPlaybackSeekRef.current = false;
+      return;
+    }
+
+    awaitingPlaybackSeekRef.current = stateRef.current.isPlaying;
+    audio.currentTime = time;
 
     if (stateRef.current.isPlaying) {
-      awaitingPlaybackSeekRef.current = true;
-      audio.currentTime = time;
       confirmPlaybackSeek(audio, time);
       return;
     }
 
     awaitingPlaybackSeekRef.current = false;
-
-    if (audio.readyState >= 1) {
-      audio.currentTime = time;
-    }
   }, [clearPlaybackSeekAnimation, confirmPlaybackSeek, ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {

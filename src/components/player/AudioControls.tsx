@@ -10,6 +10,7 @@ interface AudioControlsProps {
   isMuted: boolean;
   isLooping: boolean;
   onTogglePlay: () => void;
+  onSeekPreview: (time: number) => void;
   onSeek: (time: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleMute: () => void;
@@ -32,6 +33,7 @@ const AudioControls = ({
   isMuted,
   isLooping,
   onTogglePlay,
+  onSeekPreview,
   onSeek,
   onVolumeChange,
   onToggleMute,
@@ -52,7 +54,7 @@ const AudioControls = ({
             max={duration || 100}
             step={0.1}
             onValueChange={([value]) => {
-              if (typeof value === 'number') onSeek(value);
+              if (typeof value === 'number') onSeekPreview(value);
             }}
             onValueCommit={([value]) => {
               if (typeof value === 'number') onSeek(value);
