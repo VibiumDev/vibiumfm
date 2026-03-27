@@ -244,6 +244,13 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     desiredTimeRef.current = time;
     awaitingPlaybackSeekRef.current = false;
     seekRetryCountRef.current = 0;
+
+    // Also set audio.currentTime while paused so the browser has the
+    // position ready before play() is called. This helps on standalone
+    // pages where Chrome may ignore seeks issued only during play().
+    if (audio.readyState >= 1) {
+      audio.currentTime = time;
+    }
   }, [ensureAudioElement]);
 
   const toggleLoop = useCallback(() => {
