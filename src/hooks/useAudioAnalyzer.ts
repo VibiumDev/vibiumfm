@@ -19,9 +19,12 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const animationRef = useRef<number>(0);
-  const pendingSeekRef = useRef<number | null>(null);
-  const pendingSeekAttemptsRef = useRef(0);
   const cleanupAudioListenersRef = useRef<(() => void) | null>(null);
+
+  // Separate refs for the Chrome-safe seek reconciliation
+  const desiredTimeRef = useRef<number | null>(null);
+  const awaitingPlaybackSeekRef = useRef(false);
+  const seekRetryCountRef = useRef(0);
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
@@ -43,21 +46,38 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       audio.preload = 'auto';
 
       const handleTimeUpdate = () => {
-        const target = pendingSeekRef.current;
+        const target = desiredTimeRef.current;
 
-        if (target !== null) {
+        // While awaiting playback confirmation at a seek target, guard against Chrome pushing 0
+        if (target !== null && awaitingPlaybackSeekRef.current) {
           if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
-            pendingSeekRef.current = null;
-            pendingSeekAttemptsRef.current = 0;
+            // Confirmed: playback is at the target
+            desiredTimeRef.current = null;
+            awaitingPlaybackSeekRef.current = false;
+            seekRetryCountRef.current = 0;
             setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-          } else if (stateRef.current.isPlaying && pendingSeekAttemptsRef.current < 3) {
-            pendingSeekAttemptsRef.current += 1;
+          } else if (seekRetryCountRef.current < 5) {
+            // Chrome reset to 0 — force seek again
+            seekRetryCountRef.current += 1;
             audio.currentTime = target;
             setState(prev => ({ ...prev, currentTime: target }));
+          } else {
+            // Give up after too many retries
+            desiredTimeRef.current = null;
+            awaitingPlaybackSeekRef.current = false;
+            seekRetryCountRef.current = 0;
+            setState(prev => ({ ...prev, currentTime: audio.currentTime }));
           }
           return;
         }
 
+        // If we have a desired time but not awaiting playback (paused scrub), keep UI at desired
+        if (target !== null) {
+          setState(prev => ({ ...prev, currentTime: target }));
+          return;
+        }
+
+        // Normal: no pending seek
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
       };
 
@@ -66,38 +86,32 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       };
 
       const handleEnded = () => {
-        pendingSeekRef.current = null;
-        pendingSeekAttemptsRef.current = 0;
+        desiredTimeRef.current = null;
+        awaitingPlaybackSeekRef.current = false;
+        seekRetryCountRef.current = 0;
         setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
       };
 
+      // Do NOT clear desiredTimeRef in seeked — Chrome fires this before playback stabilizes
       const handleSeeked = () => {
-        const target = pendingSeekRef.current;
-
-        if (target === null) return;
-
-        if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
-          pendingSeekRef.current = null;
-          pendingSeekAttemptsRef.current = 0;
-          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-        }
+        // intentionally empty — confirmation happens in timeupdate/playing only
       };
 
-      // Reconciliation: when playback actually starts, re-apply seek if needed
       const handlePlaying = () => {
-        const target = pendingSeekRef.current;
-
-        if (target !== null) {
+        const target = desiredTimeRef.current;
+        if (target !== null && awaitingPlaybackSeekRef.current) {
           if (Math.abs(audio.currentTime - target) > SEEK_TOLERANCE) {
-            pendingSeekAttemptsRef.current += 1;
+            // Chrome started from wrong position — force seek
+            seekRetryCountRef.current += 1;
             audio.currentTime = target;
             setState(prev => ({ ...prev, currentTime: target }));
-            return;
+          } else {
+            // Already at target
+            desiredTimeRef.current = null;
+            awaitingPlaybackSeekRef.current = false;
+            seekRetryCountRef.current = 0;
+            setState(prev => ({ ...prev, currentTime: audio.currentTime }));
           }
-
-          pendingSeekRef.current = null;
-          pendingSeekAttemptsRef.current = 0;
-          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
         }
       };
 
@@ -161,16 +175,23 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       await audioContextRef.current.resume();
     }
 
-    // Apply deferred seek before playing
-    const target = pendingSeekRef.current;
+    const target = desiredTimeRef.current;
     if (target !== null) {
-      pendingSeekAttemptsRef.current = 0;
+      // Apply the deferred seek before play
       audio.currentTime = target;
       setState(prev => ({ ...prev, currentTime: target }));
+      // Mark as awaiting confirmation — don't clear desiredTimeRef yet
+      awaitingPlaybackSeekRef.current = true;
+      seekRetryCountRef.current = 0;
     }
 
     await audio.play();
     setState(prev => ({ ...prev, isPlaying: true }));
+
+    // Post-play: if Chrome reset position, force it again
+    if (target !== null && Math.abs(audio.currentTime - target) > SEEK_TOLERANCE) {
+      audio.currentTime = target;
+    }
   }, [ensureAudioGraph]);
 
   const pause = useCallback(() => {
@@ -210,18 +231,20 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
 
-    // Always update React state immediately
+    // Always update UI immediately
     setState(prev => ({ ...prev, currentTime: time }));
 
     if (stateRef.current.isPlaying) {
-      // Playing: seek the audio element directly
+      // Playing: seek directly, no deferred logic needed
       audio.currentTime = time;
-      pendingSeekRef.current = null;
-      pendingSeekAttemptsRef.current = 0;
+      desiredTimeRef.current = null;
+      awaitingPlaybackSeekRef.current = false;
+      seekRetryCountRef.current = 0;
     } else {
-      // Paused: defer the seek until play()
-      pendingSeekRef.current = time;
-      pendingSeekAttemptsRef.current = 0;
+      // Paused: store desired time, defer actual seek to play()
+      desiredTimeRef.current = time;
+      awaitingPlaybackSeekRef.current = false; // not awaiting yet — that happens on play()
+      seekRetryCountRef.current = 0;
     }
   }, [ensureAudioElement]);
 
