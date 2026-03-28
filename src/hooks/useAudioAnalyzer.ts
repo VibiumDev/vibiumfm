@@ -10,8 +10,7 @@ interface AudioAnalyzerState {
   frequencyData: Uint8Array;
 }
 
-const SEEK_TOLERANCE = 0.5;
-const SEEK_RETRY_LIMIT = 8;
+const SEEK_TOLERANCE = 0.35;
 
 export const useAudioAnalyzer = (audioUrl: string) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -22,10 +21,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
   const animationRef = useRef<number>(0);
   const playbackSeekAnimationRef = useRef<number>(0);
   const cleanupAudioListenersRef = useRef<(() => void) | null>(null);
-
-  const desiredTimeRef = useRef<number | null>(null);
-  const awaitingPlaybackSeekRef = useRef(false);
-  const seekRetryCountRef = useRef(0);
+  const pendingSeekRef = useRef<number | null>(null);
 
   const [state, setState] = useState<AudioAnalyzerState>({
     isPlaying: false,
@@ -45,32 +41,28 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     playbackSeekAnimationRef.current = 0;
   }, []);
 
-  const confirmPlaybackSeek = useCallback((audio: HTMLAudioElement, target: number) => {
+  const getClampedTime = useCallback((audio: HTMLAudioElement, time: number) => {
+    const max = Number.isFinite(audio.duration) ? audio.duration : time;
+    return Math.max(0, Math.min(time, max));
+  }, []);
+
+  const schedulePlaybackSeekCorrection = useCallback((audio: HTMLAudioElement) => {
     clearPlaybackSeekAnimation();
 
     playbackSeekAnimationRef.current = requestAnimationFrame(() => {
       playbackSeekAnimationRef.current = requestAnimationFrame(() => {
         playbackSeekAnimationRef.current = 0;
 
-        if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
-          desiredTimeRef.current = null;
-          awaitingPlaybackSeekRef.current = false;
-          seekRetryCountRef.current = 0;
-          setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-          return;
-        }
+        const target = pendingSeekRef.current;
+        if (target === null) return;
 
-        if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
-          seekRetryCountRef.current += 1;
+        if (Math.abs(audio.currentTime - target) > SEEK_TOLERANCE) {
           audio.currentTime = target;
           setState(prev => ({ ...prev, currentTime: target }));
           return;
         }
 
-        desiredTimeRef.current = null;
-        awaitingPlaybackSeekRef.current = false;
-        seekRetryCountRef.current = 0;
-        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
+        pendingSeekRef.current = null;
       });
     });
   }, [clearPlaybackSeekAnimation]);
@@ -82,67 +74,56 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       audio.preload = 'auto';
 
       const handleTimeUpdate = () => {
-        const target = desiredTimeRef.current;
+        const target = pendingSeekRef.current;
 
-        if (target !== null && awaitingPlaybackSeekRef.current) {
-          if (Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
-            clearPlaybackSeekAnimation();
-            desiredTimeRef.current = null;
-            awaitingPlaybackSeekRef.current = false;
-            seekRetryCountRef.current = 0;
-            setState(prev => ({ ...prev, currentTime: audio.currentTime }));
-            return;
-          }
-
-          if (seekRetryCountRef.current < SEEK_RETRY_LIMIT) {
-            seekRetryCountRef.current += 1;
-            audio.currentTime = target;
-            setState(prev => ({ ...prev, currentTime: target }));
-            return;
-          }
-
-          clearPlaybackSeekAnimation();
-          desiredTimeRef.current = null;
-          awaitingPlaybackSeekRef.current = false;
-          seekRetryCountRef.current = 0;
+        if (target !== null && Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+          pendingSeekRef.current = null;
         }
 
         setState(prev => ({ ...prev, currentTime: audio.currentTime }));
       };
 
       const handleLoadedMetadata = () => {
-        setState(prev => ({ ...prev, duration: audio.duration }));
+        const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+        const target = pendingSeekRef.current;
+
+        if (target !== null) {
+          const clampedTarget = getClampedTime(audio, target);
+          pendingSeekRef.current = clampedTarget;
+          audio.currentTime = clampedTarget;
+          setState(prev => ({ ...prev, duration: nextDuration, currentTime: clampedTarget }));
+          return;
+        }
+
+        setState(prev => ({ ...prev, duration: nextDuration }));
+      };
+
+      const handlePlaying = () => {
+        setState(prev => ({ ...prev, isPlaying: true, currentTime: audio.currentTime }));
+
+        if (pendingSeekRef.current !== null) {
+          schedulePlaybackSeekCorrection(audio);
+        }
+      };
+
+      const handlePause = () => {
+        setState(prev => ({ ...prev, isPlaying: false, currentTime: audio.currentTime }));
+      };
+
+      const handleSeeked = () => {
+        const target = pendingSeekRef.current;
+
+        if (target !== null && Math.abs(audio.currentTime - target) <= SEEK_TOLERANCE) {
+          pendingSeekRef.current = null;
+        }
+
+        setState(prev => ({ ...prev, currentTime: audio.currentTime }));
       };
 
       const handleEnded = () => {
         clearPlaybackSeekAnimation();
-        desiredTimeRef.current = null;
-        awaitingPlaybackSeekRef.current = false;
-        seekRetryCountRef.current = 0;
+        pendingSeekRef.current = null;
         setState(prev => ({ ...prev, isPlaying: false, currentTime: 0 }));
-      };
-
-      const handleSeeking = () => {
-        if (desiredTimeRef.current !== null && stateRef.current.isPlaying) {
-          awaitingPlaybackSeekRef.current = true;
-        }
-      };
-
-      const handleSeeked = () => {
-        if (desiredTimeRef.current !== null && !awaitingPlaybackSeekRef.current) {
-          setState(prev => ({ ...prev, currentTime: desiredTimeRef.current ?? prev.currentTime }));
-        }
-      };
-
-      const handlePlaying = () => {
-        const target = desiredTimeRef.current;
-
-        if (target !== null) {
-          awaitingPlaybackSeekRef.current = true;
-          seekRetryCountRef.current = 0;
-          setState(prev => ({ ...prev, currentTime: target }));
-          confirmPlaybackSeek(audio, target);
-        }
       };
 
       audio.volume = stateRef.current.volume;
@@ -151,25 +132,25 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
       audio.addEventListener('timeupdate', handleTimeUpdate);
       audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.addEventListener('ended', handleEnded);
-      audio.addEventListener('seeking', handleSeeking);
-      audio.addEventListener('seeked', handleSeeked);
       audio.addEventListener('playing', handlePlaying);
+      audio.addEventListener('pause', handlePause);
+      audio.addEventListener('seeked', handleSeeked);
+      audio.addEventListener('ended', handleEnded);
 
       cleanupAudioListenersRef.current = () => {
         audio.removeEventListener('timeupdate', handleTimeUpdate);
         audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        audio.removeEventListener('ended', handleEnded);
-        audio.removeEventListener('seeking', handleSeeking);
-        audio.removeEventListener('seeked', handleSeeked);
         audio.removeEventListener('playing', handlePlaying);
+        audio.removeEventListener('pause', handlePause);
+        audio.removeEventListener('seeked', handleSeeked);
+        audio.removeEventListener('ended', handleEnded);
       };
 
       audioRef.current = audio;
     }
 
     return audioRef.current;
-  }, [audioUrl, clearPlaybackSeekAnimation, confirmPlaybackSeek]);
+  }, [audioUrl, clearPlaybackSeekAnimation, getClampedTime, schedulePlaybackSeekCorrection]);
 
   const ensureAudioGraph = useCallback(() => {
     const audio = ensureAudioElement();
@@ -181,7 +162,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       analyserRef.current.smoothingTimeConstant = 0.8;
 
       gainRef.current = audioContextRef.current.createGain();
-      gainRef.current.gain.value = stateRef.current.volume;
+      gainRef.current.gain.value = stateRef.current.isMuted ? 0 : stateRef.current.volume;
 
       sourceRef.current = audioContextRef.current.createMediaElementSource(audio);
       sourceRef.current.connect(analyserRef.current);
@@ -201,34 +182,44 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const play = useCallback(async () => {
     ensureAudioGraph();
-    const audio = audioRef.current!;
-    const target = desiredTimeRef.current;
+    const audio = audioRef.current;
+
+    if (!audio) return;
 
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
 
-    if (target !== null) {
-      clearPlaybackSeekAnimation();
-      awaitingPlaybackSeekRef.current = true;
-      seekRetryCountRef.current = 0;
+    if (pendingSeekRef.current !== null) {
+      const target = getClampedTime(audio, pendingSeekRef.current);
+      pendingSeekRef.current = target;
       audio.currentTime = target;
       setState(prev => ({ ...prev, currentTime: target }));
     }
 
-    await audio.play();
-    setState(prev => ({ ...prev, isPlaying: true, currentTime: target ?? prev.currentTime }));
+    try {
+      await audio.play();
+      setState(prev => ({ ...prev, isPlaying: true, currentTime: audio.currentTime }));
 
-    if (target !== null) {
-      audio.currentTime = target;
-      confirmPlaybackSeek(audio, target);
+      if (pendingSeekRef.current !== null) {
+        schedulePlaybackSeekCorrection(audio);
+      }
+    } catch {
+      setState(prev => ({ ...prev, isPlaying: false }));
     }
-  }, [clearPlaybackSeekAnimation, confirmPlaybackSeek, ensureAudioGraph]);
+  }, [ensureAudioGraph, getClampedTime, schedulePlaybackSeekCorrection]);
 
   const pause = useCallback(() => {
     clearPlaybackSeekAnimation();
-    audioRef.current?.pause();
-    setState(prev => ({ ...prev, isPlaying: false }));
+    const audio = audioRef.current;
+
+    if (!audio) {
+      setState(prev => ({ ...prev, isPlaying: false }));
+      return;
+    }
+
+    audio.pause();
+    setState(prev => ({ ...prev, isPlaying: false, currentTime: audio.currentTime }));
   }, [clearPlaybackSeekAnimation]);
 
   const togglePlay = useCallback(() => {
@@ -241,21 +232,29 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const setVolume = useCallback((volume: number) => {
     const audio = ensureAudioElement();
+    const isMuted = volume === 0;
+
     audio.volume = volume;
+    audio.muted = isMuted;
+
     if (gainRef.current) {
-      gainRef.current.gain.value = volume;
+      gainRef.current.gain.value = isMuted ? 0 : volume;
     }
-    setState(prev => ({ ...prev, volume, isMuted: volume === 0 }));
+
+    setState(prev => ({ ...prev, volume, isMuted }));
   }, [ensureAudioElement]);
 
   const toggleMute = useCallback(() => {
     const audio = ensureAudioElement();
+
     setState(prev => {
       const newMuted = !prev.isMuted;
       audio.muted = newMuted;
+
       if (gainRef.current) {
         gainRef.current.gain.value = newMuted ? 0 : prev.volume;
       }
+
       return { ...prev, isMuted: newMuted };
     });
   }, [ensureAudioElement]);
@@ -266,30 +265,24 @@ export const useAudioAnalyzer = (audioUrl: string) => {
 
   const seek = useCallback((time: number) => {
     const audio = ensureAudioElement();
+    const nextTime = getClampedTime(audio, time);
 
     clearPlaybackSeekAnimation();
-    desiredTimeRef.current = time;
-    seekRetryCountRef.current = 0;
-    setState(prev => ({ ...prev, currentTime: time }));
+    pendingSeekRef.current = nextTime;
+    setState(prev => ({ ...prev, currentTime: nextTime }));
 
-    if (audio.readyState < 1) {
-      awaitingPlaybackSeekRef.current = false;
-      return;
-    }
+    if (audio.readyState < 1) return;
 
-    audio.currentTime = time;
+    audio.currentTime = nextTime;
 
     if (stateRef.current.isPlaying) {
-      awaitingPlaybackSeekRef.current = true;
-      confirmPlaybackSeek(audio, time);
-      return;
+      schedulePlaybackSeekCorrection(audio);
     }
-
-    awaitingPlaybackSeekRef.current = false;
-  }, [clearPlaybackSeekAnimation, confirmPlaybackSeek, ensureAudioElement]);
+  }, [clearPlaybackSeekAnimation, ensureAudioElement, getClampedTime, schedulePlaybackSeekCorrection]);
 
   const toggleLoop = useCallback(() => {
     const audio = ensureAudioElement();
+
     setState(prev => {
       const newLooping = !prev.isLooping;
       audio.loop = newLooping;
@@ -303,6 +296,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
     } else {
       cancelAnimationFrame(animationRef.current);
     }
+
     return () => cancelAnimationFrame(animationRef.current);
   }, [state.isPlaying, updateFrequencyData]);
 
@@ -316,7 +310,7 @@ export const useAudioAnalyzer = (audioUrl: string) => {
       cancelAnimationFrame(animationRef.current);
       cleanupAudioListenersRef.current?.();
       audioRef.current?.pause();
-      audioContextRef.current?.close();
+      void audioContextRef.current?.close();
     };
   }, [clearPlaybackSeekAnimation]);
 
